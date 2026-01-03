@@ -1,7 +1,8 @@
 """
 jav-fetch — scrape metadata from missav.ws (Traditional Chinese) into SQLite.
+Uses Playwright (real browser) to bypass Cloudflare on both search and detail pages.
 
-Usage (after `uv run`):
+Usage:
     jav-fetch MISM-410
     jav-fetch MISM-410 ABW-123 SSIS-456
     jav-fetch --file ids.txt
@@ -14,36 +15,60 @@ import re
 import sys
 import time
 from datetime import datetime
+from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
-import requests
-from bs4 import BeautifulSoup
-
-from .config import BASE_URL, DELAY, HEADERS, LANG, open_db
+from .config import BASE_URL, DELAY, LANG, open_db
 
 
-# ── HTTP session ──────────────────────────────────────────────────────────────
+# ── Playwright page fetch ─────────────────────────────────────────────────────
 
-def make_session() -> requests.Session:
-    s = requests.Session()
-    s.headers.update(HEADERS)
-    return s
+def _browser_get(url: str, wait_ms: int = 2000) -> tuple[str, str]:
+    """Return (final_url, html) using a real Chromium browser."""
+    from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(
+            headless=True,
+            args=["--no-sandbox", "--disable-blink-features=AutomationControlled"],
+        )
+        ctx = browser.new_context(
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/122.0.0.0 Safari/537.36"
+            ),
+            locale="zh-TW",
+            extra_http_headers={"Accept-Language": "zh-TW,zh;q=0.9"},
+        )
+        page = ctx.new_page()
+        try:
+            page.goto(url, wait_until="domcontentloaded", timeout=30_000)
+            page.wait_for_timeout(wait_ms)
+        except PWTimeout:
+            print("  [WARN] page load timed out, parsing partial content")
+        final_url = page.url
+        html = page.content()
+        ctx.close()
+        browser.close()
+    return final_url, html
 
 
 # ── Search ────────────────────────────────────────────────────────────────────
 
-def search_id(session: requests.Session, jav_id: str) -> str | None:
-    """Return the canonical detail-page URL, skipping uncensored-leak results."""
+def search_id(jav_id: str) -> str | None:
+    """Return canonical detail-page URL, skipping uncensored-leak variants."""
+    from bs4 import BeautifulSoup
+
     search_url = f"{BASE_URL}/{LANG}/search/{jav_id.lower()}"
     print(f"  [SEARCH] {search_url}")
     try:
-        resp = session.get(search_url, timeout=15)
-        resp.raise_for_status()
-    except requests.RequestException as e:
-        print(f"  [ERROR] {e}")
+        _, html = _browser_get(search_url)
+    except Exception as e:
+        print(f"  [ERROR] search failed: {e}")
         return None
 
-    soup = BeautifulSoup(resp.text, "lxml")
+    soup = BeautifulSoup(html, "lxml")
     id_lower = jav_id.lower()
     candidates: list[str] = []
 
@@ -66,7 +91,10 @@ def search_id(session: requests.Session, jav_id: str) -> str | None:
 
 # ── Detail page ───────────────────────────────────────────────────────────────
 
-def fetch_detail(session: requests.Session, url: str, jav_id: str) -> dict | None:
+def fetch_detail(url: str, jav_id: str) -> dict | None:
+    from bs4 import BeautifulSoup
+
+    # Ensure language prefix
     parsed = urlparse(url)
     path = parsed.path
     if not path.startswith(f"/{LANG}/"):
@@ -75,13 +103,12 @@ def fetch_detail(session: requests.Session, url: str, jav_id: str) -> dict | Non
 
     print(f"  [DETAIL] {url}")
     try:
-        resp = session.get(url, timeout=15)
-        resp.raise_for_status()
-    except requests.RequestException as e:
-        print(f"  [ERROR] {e}")
+        _, html = _browser_get(url, wait_ms=3000)
+    except Exception as e:
+        print(f"  [ERROR] detail fetch failed: {e}")
         return None
 
-    soup = BeautifulSoup(resp.text, "lxml")
+    soup = BeautifulSoup(html, "lxml")
     data: dict = {
         "jav_id":     jav_id.upper(),
         "page_url":   url,
@@ -104,13 +131,17 @@ def fetch_detail(session: requests.Session, url: str, jav_id: str) -> dict | Non
         data["cover_url"] = og_img.get("content", "").strip()
 
     # Plot
-    og_desc = soup.find("meta", property="og:description") or \
-              soup.find("meta", attrs={"name": "description"})
+    og_desc = (
+        soup.find("meta", property="og:description")
+        or soup.find("meta", attrs={"name": "description"})
+    )
     if og_desc:
         data["plot"] = og_desc.get("content", "").strip()
 
     # Structured metadata rows
-    for row in soup.select("div.grid-cols-1 > div, div.space-y-2 > div, div.detail > div"):
+    for row in soup.select(
+        "div.grid-cols-1 > div, div.space-y-2 > div, div.detail > div"
+    ):
         _parse_meta_row(row, row.get_text(" ", strip=True), data)
 
     # Actress names from anchor tags near cast labels
@@ -138,10 +169,10 @@ def fetch_detail(session: requests.Session, url: str, jav_id: str) -> dict | Non
 
 _LABEL_MAP = {
     "發行日期": "release_date", "發售日期": "release_date", "日期": "release_date",
-    "時長": "duration_min",    "片長": "duration_min",
-    "發行商": "publisher",     "廠商": "publisher",
-    "標籤": "label",           "系列": "series",
-    "導演": "director",        "評分": "rating",
+    "時長": "duration_min",     "片長": "duration_min",
+    "發行商": "publisher",      "廠商": "publisher",
+    "標籤": "label",            "系列": "series",
+    "導演": "director",         "評分": "rating",
 }
 _ACTRESS_KEYS = {"女優", "演員", "出演", "Cast"}
 _GENRE_KEYS   = {"類型", "標籤", "Tags", "Genre", "分類"}
@@ -207,7 +238,7 @@ def _parse_jsonld(ld, data: dict):
                 data["actresses"].append(name)
 
 
-def _parse_fallback(soup: BeautifulSoup, data: dict):
+def _parse_fallback(soup, data: dict):
     full_text = soup.get_text("\n")
     if "release_date" not in data:
         m = re.search(r"(\d{4}-\d{2}-\d{2})", full_text)
@@ -273,7 +304,7 @@ def main():
     )
     parser.add_argument("ids", nargs="*", help="JAV IDs  e.g. MISM-410")
     parser.add_argument("--file", "-f", help="Text file with one ID per line")
-    parser.add_argument("--db", default="jav.db", help="SQLite database path (default: jav.db)")
+    parser.add_argument("--db", default="jav.db")
     args = parser.parse_args()
 
     ids = list(args.ids)
@@ -285,20 +316,19 @@ def main():
         parser.print_help()
         sys.exit(1)
 
-    conn    = open_db(args.db)
-    session = make_session()
+    conn = open_db(args.db)
 
     for jav_id in ids:
         print(f"\n{'─'*50}\n{jav_id}")
-        url = search_id(session, jav_id)
+        url = search_id(jav_id)
         if not url:
             continue
         time.sleep(DELAY)
-        data = fetch_detail(session, url, jav_id)
+        data = fetch_detail(url, jav_id)
         if not data:
             continue
         vid_id = upsert_video(conn, data)
-        print(f"  [OK] saved (id={vid_id})  {data.get('title','')[:60]}")
+        print(f"  [OK] id={vid_id}  {data.get('title','')[:60]}")
         time.sleep(DELAY)
 
     conn.close()
