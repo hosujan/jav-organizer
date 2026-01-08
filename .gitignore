@@ -9,3 +9,6 @@ wheels/
 # Virtual environments
 .venv
 media/
+
+# Database files
+*.db
