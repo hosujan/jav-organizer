@@ -1,5 +1,5 @@
 """
-jav-media — download poster, screenshots, and preview GIF/MP4.
+jav-media — download poster and preview MP4.
 Uses Playwright to intercept real CDN URLs, with smart filtering to reject
 ad/tracker URLs and a CDN-pattern prober as fallback.
 
@@ -12,7 +12,6 @@ Usage:
 
 from __future__ import annotations
 import argparse
-import json
 import re
 import sys
 import time
@@ -60,9 +59,7 @@ def scrape_media_urls(jav_id: str) -> dict:
     page_url = f"{BASE_URL}/{LANG}/{jav_id.lower()}"
     results: dict = {
         "poster":      None,
-        "preview_gif": None,
         "preview_mp4": None,
-        "screenshots": [],
     }
     captured: list[str] = []
 
@@ -106,26 +103,8 @@ def scrape_media_urls(jav_id: str) -> dict:
         # ── Classify every intercepted network URL ────────────────────────
         _scan_network(captured, results)
 
-        # ── img tags (data-src for lazy-loaded ones) ──────────────────────
-        seen: set[str] = set()
-        for img in page.query_selector_all("img[src], img[data-src]"):
-            src = img.get_attribute("data-src") or img.get_attribute("src") or ""
-            if not src or src in seen or not _is_cdn_url(src):
-                continue
-            seen.add(src)
-            sl = src.lower()
-            # Exclude the poster/cover itself from the screenshots list
-            if "cover" in sl:
-                if not results["poster"]:
-                    results["poster"] = src
-                continue
-            ext = Path(urlparse(src).path).suffix.lower()
-            if ext in (".jpg", ".jpeg", ".png", ".webp"):
-                if src not in results["screenshots"]:
-                    results["screenshots"].append(src)
-
-        # ── Hover player to trigger GIF/preview load ──────────────────────
-        if not results["preview_gif"] and not results["preview_mp4"]:
+        # ── Hover player to trigger preview load ──────────────────────────
+        if not results["preview_mp4"]:
             player = page.query_selector(
                 "video, .video-player, #player, [class*='player'], [id*='player']"
             )
@@ -155,7 +134,7 @@ def _parse_js_vars(html: str, results: dict):
     """
     missav embeds asset URLs directly in inline JS, e.g.:
         var player_poster = "https://fourhoi.com/mism-410/cover-n.jpg"
-        var preview_gif   = "https://fourhoi.com/mism-410/preview.gif"
+        var preview_video = "https://fourhoi.com/mism-410/preview.mp4"
         var video_url     = [...]
     """
     _patterns = {
@@ -163,10 +142,6 @@ def _parse_js_vars(html: str, results: dict):
             r'player_poster\s*[=:]\s*["\']([^"\']+)["\']',
             r'"poster"\s*:\s*"([^"\']+)"',
             r"poster\s*[=:]\s*['\"]([^'\"]+)['\"]",
-        ],
-        "preview_gif": [
-            r'preview_gif\s*[=:]\s*["\']([^"\']+\.gif)["\']',
-            r'preview\s*[=:]\s*["\']([^"\']+\.gif)["\']',
         ],
         "preview_mp4": [
             r'preview_video\s*[=:]\s*["\']([^"\']+\.mp4)["\']',
@@ -188,19 +163,6 @@ def _parse_js_vars(html: str, results: dict):
                     results[key] = url
                     break
 
-    # Screenshot arrays in JS
-    for pat in [
-        r'screenshots?\s*[=:]\s*\[([^\]]+)\]',
-        r'sample_images?\s*[=:]\s*\[([^\]]+)\]',
-        r'thumbnails?\s*[=:]\s*\[([^\]]+)\]',
-    ]:
-        m = re.search(pat, html, re.IGNORECASE)
-        if m:
-            for u in re.findall(r'["\']([^"\']+\.jpe?g)["\']', m.group(1)):
-                full = u if u.startswith("http") else "https:" + u.lstrip("/")
-                if _is_cdn_url(full) and full not in results["screenshots"]:
-                    results["screenshots"].append(full)
-
 
 # ── Network URL classifier ────────────────────────────────────────────────────
 
@@ -215,16 +177,9 @@ def _scan_network(captured: list[str], results: dict):
             if "cover" in ul:
                 results["poster"] = url
 
-        if not results["preview_gif"] and ext == ".gif":
-            results["preview_gif"] = url
-
         if not results["preview_mp4"] and ext == ".mp4":
             if any(k in ul for k in ["preview", "sample", "trailer"]):
                 results["preview_mp4"] = url
-
-        if ext in (".jpg", ".jpeg", ".png", ".webp") and "cover" not in ul:
-            if url not in results["screenshots"]:
-                results["screenshots"].append(url)
 
 
 # ── CDN pattern prober ────────────────────────────────────────────────────────
@@ -232,7 +187,7 @@ def _scan_network(captured: list[str], results: dict):
 def _probe_cdn_patterns(jav_id: str, results: dict):
     """
     Given a known poster URL like https://fourhoi.com/mism-410/cover-n.jpg,
-    derive the CDN base and probe common naming patterns for preview + screenshots.
+    derive the CDN base and probe common naming patterns for preview mp4.
     Uses HEAD requests — fast, no big downloads.
     """
     poster_url = results["poster"]
@@ -263,15 +218,6 @@ def _probe_cdn_patterns(jav_id: str, results: dict):
             pass
         return None
 
-    # Preview GIF
-    if not results["preview_gif"]:
-        for name in ["preview.gif", "preview.webp", f"{jav_id.lower()}.gif"]:
-            found = probe(name)
-            if found:
-                results["preview_gif"] = found
-                print(f"  [PROBE] preview gif → {found}")
-                break
-
     # Preview MP4
     if not results["preview_mp4"]:
         for name in ["preview.mp4", "sample.mp4", f"{jav_id.lower()}_preview.mp4"]:
@@ -281,33 +227,13 @@ def _probe_cdn_patterns(jav_id: str, results: dict):
                 print(f"  [PROBE] preview mp4 → {found}")
                 break
 
-    # Screenshots: try 1.jpg … 12.jpg and screenshot-N.jpg, thumb-N.jpg
-    if not results["screenshots"]:
-        candidates = (
-            [f"{i}.jpg"            for i in range(1, 13)] +
-            [f"screenshot-{i}.jpg" for i in range(1, 13)] +
-            [f"thumb-{i}.jpg"      for i in range(1, 13)] +
-            [f"sample-{i}.jpg"     for i in range(1, 13)]
-        )
-        for name in candidates:
-            found = probe(name)
-            if found and found not in results["screenshots"]:
-                results["screenshots"].append(found)
-                print(f"  [PROBE] screenshot → {found}")
-
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 
 def _log_results(jav_id: str, r: dict):
     print(f"\n  Results for {jav_id}:")
     print(f"    Poster      : {r['poster'] or '—'}")
-    print(f"    Preview GIF : {r['preview_gif'] or '—'}")
     print(f"    Preview MP4 : {r['preview_mp4'] or '—'}")
-    print(f"    Screenshots : {len(r['screenshots'])}")
-    for i, s in enumerate(r["screenshots"][:6], 1):
-        print(f"      [{i}] {s}")
-    if len(r["screenshots"]) > 6:
-        print(f"      … and {len(r['screenshots']) - 6} more")
 
 
 # ── File downloader ───────────────────────────────────────────────────────────
@@ -348,23 +274,14 @@ def download_media(jav_id: str, results: dict, base_dir: Path = MEDIA_DIR) -> di
             print(f"    [ERR] {name}: {e}")
             return None
 
-    saved: dict = {"screenshots": []}
+    saved: dict = {}
 
     if results.get("poster"):
         ext = Path(urlparse(results["poster"]).path).suffix or ".jpg"
         saved["poster"] = dl(results["poster"], f"poster{ext}")
 
-    if results.get("preview_gif"):
-        saved["preview_gif"] = dl(results["preview_gif"], "preview.gif")
-
     if results.get("preview_mp4"):
         saved["preview_mp4"] = dl(results["preview_mp4"], "preview.mp4")
-
-    for i, url in enumerate(results.get("screenshots", []), 1):
-        ext = Path(urlparse(url).path).suffix or ".jpg"
-        local = dl(url, f"screenshot_{i:02d}{ext}")
-        if local:
-            saved["screenshots"].append(local)
 
     print(f"\n  Saved to: {out_dir}/")
     return saved
@@ -376,15 +293,13 @@ def save_media_urls(conn, jav_id: str, results: dict):
     conn.execute("""
         UPDATE videos SET
             poster_url       = ?,
-            preview_gif_url  = ?,
             preview_mp4_url  = ?,
-            screenshots_json = ?
+            preview_gif_url  = NULL,
+            screenshots_json = '[]'
         WHERE jav_id = ?
     """, (
         results.get("poster"),
-        results.get("preview_gif"),
         results.get("preview_mp4"),
-        json.dumps(results.get("screenshots", []), ensure_ascii=False),
         jav_id.upper(),
     ))
     conn.commit()
@@ -395,7 +310,7 @@ def save_media_urls(conn, jav_id: str, results: dict):
 def main():
     parser = argparse.ArgumentParser(
         prog="jav-media",
-        description="Download poster, screenshots, and preview GIF/MP4",
+        description="Download poster and preview MP4",
     )
     parser.add_argument("ids", nargs="*")
     parser.add_argument("--file", "-f")
