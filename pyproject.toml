@@ -15,6 +15,7 @@ dependencies = [
 jav-fetch = "jav_toolkit.scraper:main"
 jav-media = "jav_toolkit.media:main"
 jav-db    = "jav_toolkit.db:main"
+jav-web   = "jav_toolkit.webapp:main"
 
 [build-system]
 requires = ["hatchling"]

@@ -70,5 +70,8 @@ def open_db(db_path: str | Path) -> sqlite3.Connection:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
+    cols = {row["name"] for row in conn.execute("PRAGMA table_info(videos)").fetchall()}
+    if "local_video_path" not in cols:
+        conn.execute("ALTER TABLE videos ADD COLUMN local_video_path TEXT")
     conn.commit()
     return conn
