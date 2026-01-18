@@ -11,7 +11,7 @@ from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from ..config import MEDIA_DIR, open_db
 from .dialogs import choose_directory_dialog
-from .pages import INDEX_HTML, WATCH_HTML
+from .pages import ORGANIZE_HTML, VIEW_HTML, WATCH_HTML
 from .processor import process_queue
 from .scanner import scan_video_files
 from .state import AppState
@@ -150,7 +150,15 @@ class AppHandler(BaseHTTPRequestHandler):
         path = parsed.path
 
         if path == "/":
-            self._text(INDEX_HTML)
+            self.send_response(302)
+            self.send_header("Location", "/organize")
+            self.end_headers()
+            return
+        if path == "/organize":
+            self._text(ORGANIZE_HTML)
+            return
+        if path == "/view":
+            self._text(VIEW_HTML)
             return
         if path.startswith("/watch/"):
             jav_id = unquote(path.split("/watch/", 1)[1]).upper()
@@ -161,6 +169,40 @@ class AppHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/videos":
             self._json(self._load_videos())
+            return
+        if path == "/api/video":
+            q = self._query()
+            jav_id = (q.get("id") or [""])[0].upper()
+            if not jav_id:
+                self.send_error(400, "missing id")
+                return
+            conn = open_db(self.state.db_path)
+            try:
+                row = conn.execute(
+                    """
+                    SELECT jav_id, title, release_date, publisher, local_video_path,
+                           poster_url, preview_mp4_url
+                    FROM videos
+                    WHERE jav_id=?
+                    """,
+                    (jav_id,),
+                ).fetchone()
+            finally:
+                conn.close()
+            if not row:
+                self.send_error(404, "video not found")
+                return
+            self._json(
+                {
+                    "jav_id": row["jav_id"],
+                    "title": row["title"],
+                    "release_date": row["release_date"],
+                    "publisher": row["publisher"],
+                    "has_local_video": bool(row["local_video_path"]),
+                    "poster_url": f"/api/poster?id={quote(row['jav_id'])}",
+                    "preview_url": f"/api/preview?id={quote(row['jav_id'])}",
+                }
+            )
             return
         if path == "/api/poster":
             q = self._query()
@@ -350,4 +392,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
