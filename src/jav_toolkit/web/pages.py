@@ -306,6 +306,25 @@ VIEW_HTML = _layout(
     </div>
   </section>
 
+  <section id="hero" class="panel" style="margin-top:14px; background:#0d1426; border-color:#2b3b58; color:#eef4ff; display:none; padding:0; overflow:hidden;">
+    <div style="display:grid; grid-template-columns: minmax(220px, 34%) minmax(0, 1fr);">
+      <div style="background:#121d34;">
+        <img id="heroPoster" src="" alt="" style="width:100%; height:100%; object-fit:cover; display:block; min-height:260px;" />
+      </div>
+      <div style="padding:22px;">
+        <p style="margin:0; font-size:12px; letter-spacing:.2em; text-transform:uppercase; color:#8ea6cc;">Featured Tonight</p>
+        <h2 id="heroTitle" style="margin:8px 0 0; font-size:28px; line-height:1.2;"></h2>
+        <p id="heroMeta" style="margin:10px 0 0; color:#b9cbec; font-size:14px;"></p>
+        <div style="margin-top:18px; display:flex; gap:10px; flex-wrap:wrap;">
+          <a id="heroPlay" href="#" style="text-decoration:none; background:#0f766e; color:#fff; border:1px solid #0f766e; padding:10px 14px; border-radius:10px; font-weight:700;">Play</a>
+          <a id="heroInfo" href="#" style="text-decoration:none; background:#1c2a45; color:#d6e3fb; border:1px solid #334766; padding:10px 14px; border-radius:10px;">Open Details</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="rails" style="margin-top:14px; display:none;"></section>
+
   <section class="panel" style="margin-top:14px;">
     <div style="display:flex; justify-content:space-between; gap:10px; align-items:center; margin-bottom:10px;">
       <strong>Recommended</strong>
@@ -319,6 +338,13 @@ VIEW_HTML = _layout(
     const gridEl = document.getElementById("grid");
     const searchInput = document.getElementById("searchInput");
     const resultCount = document.getElementById("resultCount");
+    const heroEl = document.getElementById("hero");
+    const heroPosterEl = document.getElementById("heroPoster");
+    const heroTitleEl = document.getElementById("heroTitle");
+    const heroMetaEl = document.getElementById("heroMeta");
+    const heroPlayEl = document.getElementById("heroPlay");
+    const heroInfoEl = document.getElementById("heroInfo");
+    const railsEl = document.getElementById("rails");
     let allVideos = [];
 
     async function get(url) {
@@ -331,67 +357,171 @@ VIEW_HTML = _layout(
       return (text || "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
     }
 
+    function toWatch(v) {
+      return "/watch/" + encodeURIComponent(v.jav_id);
+    }
+
+    function scoreVideo(v) {
+      let score = 0;
+      if (v.has_preview_local) score += 3;
+      if (v.has_poster_local) score += 2;
+      if (v.release_date) score += 1;
+      return score;
+    }
+
+    function pickFeatured(videos) {
+      if (!videos.length) return null;
+      return [...videos].sort((a, b) => {
+        const s = scoreVideo(b) - scoreVideo(a);
+        if (s) return s;
+        return (b.release_date || "").localeCompare(a.release_date || "");
+      })[0];
+    }
+
+    function renderHero(video) {
+      if (!video) {
+        heroEl.style.display = "none";
+        return;
+      }
+      heroPosterEl.src = video.poster_url;
+      heroPosterEl.alt = video.jav_id;
+      heroTitleEl.textContent = video.title ? (video.jav_id + " - " + video.title) : video.jav_id;
+      heroMetaEl.textContent = [video.release_date || "Unknown date", video.publisher || "Unknown publisher"].join(" / ");
+      heroPlayEl.href = toWatch(video);
+      heroInfoEl.href = toWatch(video);
+      heroEl.style.display = "block";
+    }
+
+    function cardMarkup(v, wide = false) {
+      const ratio = wide ? "16/9" : "2/3";
+      return `
+        <div style="position:relative; aspect-ratio:${ratio}; background:#dbe3f2; overflow:hidden;">
+          <img src="${v.poster_url}" alt="${escapeHtml(v.title || "Untitled")}" loading="lazy" style="width:100%; height:100%; object-fit:cover; display:block;" />
+          <video muted loop playsinline preload="none" src="${v.preview_url}" style="position:absolute; inset:0; width:100%; height:100%; object-fit:cover; opacity:0; transition:opacity .2s ease;"></video>
+          <div style="position:absolute; inset:auto 0 0; padding:6px 8px; font-size:12px; color:#fff; background:linear-gradient(180deg, transparent, rgba(0,0,0,.75));">${escapeHtml(v.jav_id)}</div>
+        </div>
+        <div style="padding:10px;">
+          <div style="font-weight:700; font-size:13px; line-height:1.3;">${escapeHtml(v.title || "Untitled")}</div>
+          <div class="hint" style="margin-top:4px;">${escapeHtml(v.release_date || "-")} ${escapeHtml(v.publisher || "")}</div>
+        </div>
+      `;
+    }
+
+    function attachCardEffects(card) {
+      const preview = card.querySelector("video");
+      card.addEventListener("mouseenter", () => {
+        card.style.transform = "translateY(-4px)";
+        card.style.boxShadow = "0 12px 24px rgba(15, 23, 42, .2)";
+        preview.style.opacity = "1";
+        preview.play().catch(() => {});
+      });
+      card.addEventListener("mouseleave", () => {
+        card.style.transform = "translateY(0)";
+        card.style.boxShadow = "none";
+        preview.style.opacity = "0";
+        preview.pause();
+        preview.currentTime = 0;
+      });
+    }
+
+    function makeCard(v, wide = false) {
+      const card = document.createElement("a");
+      card.href = toWatch(v);
+      card.style.textDecoration = "none";
+      card.style.color = "inherit";
+      card.style.border = "1px solid var(--line)";
+      card.style.background = "#fff";
+      card.style.borderRadius = "12px";
+      card.style.overflow = "hidden";
+      card.style.display = "block";
+      card.style.transform = "translateY(0)";
+      card.style.transition = "transform .18s ease, box-shadow .18s ease";
+      card.style.minWidth = wide ? "260px" : "";
+      card.innerHTML = cardMarkup(v, wide);
+      attachCardEffects(card);
+      return card;
+    }
+
+    function buildRails(videos) {
+      railsEl.innerHTML = "";
+      if (!videos.length) {
+        railsEl.style.display = "none";
+        return;
+      }
+
+      const rows = [];
+      const recent = [...videos]
+        .filter((v) => !!v.release_date)
+        .sort((a, b) => (b.release_date || "").localeCompare(a.release_date || ""))
+        .slice(0, 12);
+      if (recent.length) rows.push({name: "Recently Released", items: recent});
+
+      const byPublisher = new Map();
+      for (const v of videos) {
+        const key = (v.publisher || "Unknown").trim();
+        if (!byPublisher.has(key)) byPublisher.set(key, []);
+        byPublisher.get(key).push(v);
+      }
+      const topPublishers = [...byPublisher.entries()]
+        .sort((a, b) => b[1].length - a[1].length)
+        .slice(0, 2);
+      for (const [publisher, items] of topPublishers) {
+        rows.push({name: publisher + " Picks", items: items.slice(0, 12)});
+      }
+
+      for (const row of rows) {
+        const section = document.createElement("section");
+        section.className = "panel";
+        section.style.marginBottom = "14px";
+        const title = document.createElement("div");
+        title.style.marginBottom = "10px";
+        title.innerHTML = `<strong>${escapeHtml(row.name)}</strong>`;
+        const scroller = document.createElement("div");
+        scroller.style.display = "grid";
+        scroller.style.gridAutoFlow = "column";
+        scroller.style.gridAutoColumns = "minmax(230px, 1fr)";
+        scroller.style.gap = "12px";
+        scroller.style.overflowX = "auto";
+        scroller.style.paddingBottom = "6px";
+
+        for (const v of row.items) {
+          scroller.appendChild(makeCard(v, true));
+        }
+        section.appendChild(title);
+        section.appendChild(scroller);
+        railsEl.appendChild(section);
+      }
+      railsEl.style.display = rows.length ? "block" : "none";
+    }
+
     function render(videos) {
       gridEl.innerHTML = "";
       resultCount.textContent = videos.length + " title(s)";
       for (const v of videos) {
-        const card = document.createElement("a");
-        card.href = "/watch/" + encodeURIComponent(v.jav_id);
-        card.style.textDecoration = "none";
-        card.style.color = "inherit";
-        card.style.border = "1px solid var(--line)";
-        card.style.background = "#fff";
-        card.style.borderRadius = "12px";
-        card.style.overflow = "hidden";
-        card.style.display = "block";
-        card.style.transform = "translateY(0)";
-        card.style.transition = "transform .18s ease, box-shadow .18s ease";
-
-        card.innerHTML = `
-          <div style="position:relative; aspect-ratio:16/9; background:#dbe3f2; overflow:hidden;">
-            <img src="${v.poster_url}" alt="${escapeHtml(v.title || "Untitled")}" loading="lazy" style="width:100%; height:100%; object-fit:cover; display:block;" />
-            <video muted loop playsinline preload="none" src="${v.preview_url}" style="position:absolute; inset:0; width:100%; height:100%; object-fit:cover; opacity:0; transition:opacity .2s ease;"></video>
-            <div style="position:absolute; inset:auto 0 0; padding:6px 8px; font-size:12px; color:#fff; background:linear-gradient(180deg, transparent, rgba(0,0,0,.75));">${escapeHtml(v.jav_id)}</div>
-          </div>
-          <div style="padding:10px;">
-            <div style="font-weight:700; font-size:13px; line-height:1.3;">${escapeHtml(v.title || "Untitled")}</div>
-            <div class="hint" style="margin-top:4px;">${escapeHtml(v.release_date || "-")} ${escapeHtml(v.publisher || "")}</div>
-          </div>
-        `;
-
-        const preview = card.querySelector("video");
-        card.addEventListener("mouseenter", () => {
-          card.style.transform = "translateY(-4px)";
-          card.style.boxShadow = "0 12px 24px rgba(15, 23, 42, .2)";
-          preview.style.opacity = "1";
-          preview.play().catch(() => {});
-        });
-        card.addEventListener("mouseleave", () => {
-          card.style.transform = "translateY(0)";
-          card.style.boxShadow = "none";
-          preview.style.opacity = "0";
-          preview.pause();
-          preview.currentTime = 0;
-        });
-
-        gridEl.appendChild(card);
+        gridEl.appendChild(makeCard(v, true));
       }
     }
 
     function applyFilter() {
       const q = searchInput.value.trim().toLowerCase();
       if (!q) {
+        renderHero(pickFeatured(allVideos));
+        buildRails(allVideos);
         render(allVideos);
         return;
       }
       const filtered = allVideos.filter((v) => {
         return (v.jav_id || "").toLowerCase().includes(q) || (v.title || "").toLowerCase().includes(q);
       });
+      renderHero(pickFeatured(filtered));
+      buildRails(filtered);
       render(filtered);
     }
 
     async function init() {
       allVideos = await get("/api/videos");
+      renderHero(pickFeatured(allVideos));
+      buildRails(allVideos);
       render(allVideos);
     }
 
