@@ -112,11 +112,31 @@ def _layout(title: str, active: str, content: str, script: str = "") -> str:
     button.primary:hover {{ background: var(--brand-2); border-color: var(--brand-2); }}
     .hint {{ color: var(--muted); font-size: 13px; }}
 
+    @media (max-width: 1020px) {{
+      #hero > div {{ grid-template-columns: 1fr !important; }}
+      #heroPoster {{ min-height: 220px !important; max-height: 340px; }}
+      #searchInput {{ max-width: none !important; }}
+    }}
+
     @media (max-width: 760px) {{
       .shell {{ padding: 14px 12px 18px; }}
       .nav-inner {{ padding: 10px 12px; }}
       .nav-links {{ gap: 6px; }}
       .nav-link {{ padding: 7px 9px; font-size: 13px; }}
+      .brand {{ font-size: 12px; letter-spacing: 0.1em; }}
+
+      #manualPath {{ min-width: 0 !important; width: 100% !important; }}
+      #chooseBtn, #manualBtn, #processBtn {{ width: 100%; }}
+
+      #heroTitle {{ font-size: 22px !important; }}
+      #heroMeta {{ font-size: 13px !important; }}
+
+      #grid {{ grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)) !important; gap: 10px !important; }}
+      #rails .panel {{ padding: 12px; }}
+      #rails [aria-label] {{ grid-auto-columns: minmax(170px, 72vw) !important; }}
+
+      #watchTitle {{ font-size: 22px !important; }}
+      #watchMeta {{ font-size: 13px !important; }}
     }}
   </style>
 </head>
@@ -345,6 +365,7 @@ VIEW_HTML = _layout(
     const heroPlayEl = document.getElementById("heroPlay");
     const heroInfoEl = document.getElementById("heroInfo");
     const railsEl = document.getElementById("rails");
+    let activeRailScroller = null;
     let allVideos = [];
 
     async function get(url) {
@@ -442,8 +463,15 @@ VIEW_HTML = _layout(
       return card;
     }
 
+    function scrollRail(scroller, direction) {
+      if (!scroller) return;
+      const amount = Math.max(280, Math.floor(scroller.clientWidth * 0.82));
+      scroller.scrollBy({left: amount * direction, behavior: "smooth"});
+    }
+
     function buildRails(videos) {
       railsEl.innerHTML = "";
+      activeRailScroller = null;
       if (!videos.length) {
         railsEl.style.display = "none";
         return;
@@ -475,7 +503,17 @@ VIEW_HTML = _layout(
         section.style.marginBottom = "14px";
         const title = document.createElement("div");
         title.style.marginBottom = "10px";
-        title.innerHTML = `<strong>${escapeHtml(row.name)}</strong>`;
+        title.style.display = "flex";
+        title.style.alignItems = "center";
+        title.style.justifyContent = "space-between";
+        title.style.gap = "10px";
+        title.innerHTML = `
+          <strong>${escapeHtml(row.name)}</strong>
+          <div style="display:flex; gap:6px;">
+            <button type="button" data-dir="-1" style="padding:6px 10px; min-width:42px;">&#8592;</button>
+            <button type="button" data-dir="1" style="padding:6px 10px; min-width:42px;">&#8594;</button>
+          </div>
+        `;
         const scroller = document.createElement("div");
         scroller.style.display = "grid";
         scroller.style.gridAutoFlow = "column";
@@ -483,13 +521,27 @@ VIEW_HTML = _layout(
         scroller.style.gap = "12px";
         scroller.style.overflowX = "auto";
         scroller.style.paddingBottom = "6px";
+        scroller.tabIndex = 0;
+        scroller.style.outline = "none";
+        scroller.setAttribute("aria-label", row.name);
+        scroller.addEventListener("mouseenter", () => { activeRailScroller = scroller; });
+        scroller.addEventListener("focus", () => { activeRailScroller = scroller; });
 
         for (const v of row.items) {
           scroller.appendChild(makeCard(v, true));
         }
+        const buttons = title.querySelectorAll("button[data-dir]");
+        for (const btn of buttons) {
+          btn.addEventListener("click", () => {
+            const direction = Number(btn.dataset.dir || "0");
+            activeRailScroller = scroller;
+            scrollRail(scroller, direction);
+          });
+        }
         section.appendChild(title);
         section.appendChild(scroller);
         railsEl.appendChild(section);
+        if (!activeRailScroller) activeRailScroller = scroller;
       }
       railsEl.style.display = rows.length ? "block" : "none";
     }
@@ -526,6 +578,14 @@ VIEW_HTML = _layout(
     }
 
     searchInput.addEventListener("input", applyFilter);
+    document.addEventListener("keydown", (event) => {
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      const tag = (event.target && event.target.tagName) ? event.target.tagName.toLowerCase() : "";
+      if (tag === "input" || tag === "textarea") return;
+      if (!activeRailScroller) return;
+      event.preventDefault();
+      scrollRail(activeRailScroller, event.key === "ArrowLeft" ? -1 : 1);
+    });
     init().catch((err) => {
       gridEl.innerHTML = '<p class="hint">Failed to load catalog: ' + err.message + '</p>';
     });
