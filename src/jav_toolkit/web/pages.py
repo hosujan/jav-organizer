@@ -18,42 +18,42 @@ def _layout(title: str, active: str, content: str, script: str = "") -> str:
   <title>{title}</title>
   <style>
     :root {{
-      --bg: #f5f1e8;
-      --bg-2: #ece5d6;
-      --panel: #fffaf0;
-      --ink: #1f2933;
-      --muted: #667085;
-      --line: #ddd4c5;
-      --brand: #0f766e;
-      --brand-2: #115e59;
-      --night: #0b1220;
-      --night-2: #161f34;
+      --bg: #05070e;
+      --bg-2: #0b1120;
+      --panel: #0f1727;
+      --panel-2: #111d30;
+      --ink: #e6edf8;
+      --muted: #90a0bf;
+      --line: #22304b;
+      --brand: #e11d48;
+      --brand-2: #be123c;
+      --chip: #17243a;
     }}
     * {{ box-sizing: border-box; }}
     body {{
       margin: 0;
       color: var(--ink);
-      font-family: "Avenir Next", "Segoe UI", sans-serif;
+      font-family: "Poppins", "Avenir Next", "Segoe UI", sans-serif;
       background:
-        radial-gradient(circle at 14% 8%, #fff8e8 0, transparent 34%),
-        radial-gradient(circle at 82% 20%, #efe8d8 0, transparent 30%),
+        radial-gradient(circle at 8% -2%, rgba(57, 86, 164, 0.27) 0, transparent 37%),
+        radial-gradient(circle at 94% 10%, rgba(225, 29, 72, 0.2) 0, transparent 35%),
         linear-gradient(180deg, var(--bg), var(--bg-2));
       min-height: 100vh;
       display: flex;
       flex-direction: column;
     }}
     a {{ color: inherit; }}
-    .shell {{ max-width: 1240px; margin: 0 auto; width: 100%; padding: 18px 20px 24px; }}
+    .shell {{ max-width: 1320px; margin: 0 auto; width: 100%; padding: 18px 20px 26px; }}
     .navbar {{
       position: sticky;
       top: 0;
       z-index: 20;
-      backdrop-filter: blur(7px);
-      background: rgba(255, 248, 232, 0.75);
-      border-bottom: 1px solid rgba(221, 212, 197, 0.95);
+      backdrop-filter: blur(10px);
+      background: rgba(7, 12, 25, 0.72);
+      border-bottom: 1px solid rgba(34, 48, 75, 0.95);
     }}
     .nav-inner {{
-      max-width: 1240px;
+      max-width: 1320px;
       margin: 0 auto;
       padding: 10px 20px;
       display: flex;
@@ -62,11 +62,12 @@ def _layout(title: str, active: str, content: str, script: str = "") -> str:
       justify-content: space-between;
     }}
     .brand {{
-      font-size: 14px;
+      font-size: 13px;
       font-weight: 700;
-      letter-spacing: 0.14em;
+      letter-spacing: 0.12em;
       text-transform: uppercase;
       text-decoration: none;
+      color: #f6f9ff;
     }}
     .nav-links {{ display: flex; gap: 8px; align-items: center; }}
     .nav-link {{
@@ -75,47 +76,139 @@ def _layout(title: str, active: str, content: str, script: str = "") -> str:
       border-radius: 999px;
       border: 1px solid transparent;
       color: var(--muted);
-      font-size: 14px;
+      font-size: 13px;
+      background: transparent;
     }}
-    .nav-link:hover {{ border-color: var(--line); color: var(--ink); background: rgba(255,255,255,0.6); }}
+    .nav-link:hover {{ border-color: var(--line); color: var(--ink); background: rgba(255,255,255,0.06); }}
     .nav-link.active {{
       background: var(--brand);
       color: #fff;
       border-color: var(--brand);
     }}
     .panel {{
-      background: var(--panel);
+      background: linear-gradient(180deg, var(--panel), var(--panel-2));
       border: 1px solid var(--line);
       border-radius: 14px;
       padding: 16px;
-      box-shadow: 0 6px 22px rgba(34, 43, 56, 0.07);
+      box-shadow: 0 12px 30px rgba(2, 8, 20, 0.33);
     }}
     .footer {{
       margin-top: auto;
       border-top: 1px solid var(--line);
       color: var(--muted);
       font-size: 12px;
-      background: rgba(255, 255, 255, 0.35);
+      background: rgba(5, 8, 16, 0.45);
     }}
-    .footer-inner {{ max-width: 1240px; margin: 0 auto; padding: 10px 20px 14px; }}
+    .footer-inner {{ max-width: 1320px; margin: 0 auto; padding: 10px 20px 14px; }}
 
     button, input {{
       font: inherit;
       border-radius: 10px;
       border: 1px solid var(--line);
       padding: 10px 12px;
-      background: #fff;
+      background: #0d1524;
       color: var(--ink);
     }}
     button {{ cursor: pointer; }}
     button.primary {{ background: var(--brand); color: #fff; border-color: var(--brand); }}
     button.primary:hover {{ background: var(--brand-2); border-color: var(--brand-2); }}
     .hint {{ color: var(--muted); font-size: 13px; }}
+    .page-head {{
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: flex-end;
+    }}
+    .page-kicker {{
+      margin: 0;
+      font-size: 11px;
+      letter-spacing: .2em;
+      text-transform: uppercase;
+      color: #9fb1d4;
+    }}
+    .page-title {{
+      margin: 6px 0 0;
+      font-size: 30px;
+      line-height: 1.1;
+    }}
+    .card {{
+      text-decoration: none;
+      color: inherit;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #0c1525;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
+      min-width: 0;
+    }}
+    .card:hover {{
+      transform: translateY(-5px);
+      box-shadow: 0 18px 34px rgba(2, 8, 20, 0.45);
+      border-color: #395684;
+    }}
+    .card-thumb {{
+      position: relative;
+      aspect-ratio: 16 / 9;
+      background: #13213a;
+      overflow: hidden;
+      flex: 0 0 auto;
+    }}
+    .card-thumb > img,
+    .card-thumb > video {{
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }}
+    .card-thumb > video {{
+      opacity: 0;
+      transition: opacity .2s ease;
+    }}
+    .card-meta {{
+      padding: 10px 12px 12px;
+      display: grid;
+      gap: 6px;
+      min-height: 106px;
+      align-content: start;
+    }}
+    .card-title {{
+      font-weight: 700;
+      font-size: 14px;
+      line-height: 1.3;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      min-height: calc(1.3em * 2);
+    }}
+    .card-sub {{
+      color: var(--muted);
+      font-size: 12px;
+      min-height: calc(1.25em * 2);
+    }}
+    .pill {{
+      display: inline-block;
+      font-size: 11px;
+      border-radius: 999px;
+      background: var(--chip);
+      color: #bdd2f7;
+      border: 1px solid #2c3f63;
+      padding: 2px 8px;
+      width: fit-content;
+    }}
 
     @media (max-width: 1020px) {{
-      #hero > div {{ grid-template-columns: 1fr !important; }}
+      #heroSection {{ grid-template-columns: 1fr !important; }}
       #heroPoster {{ min-height: 220px !important; max-height: 340px; }}
       #searchInput {{ max-width: none !important; }}
+      .detail-layout {{ grid-template-columns: 1fr !important; }}
+      .detail-poster-wrap {{ max-width: none; }}
     }}
 
     @media (max-width: 760px) {{
@@ -128,15 +221,17 @@ def _layout(title: str, active: str, content: str, script: str = "") -> str:
       #manualPath {{ min-width: 0 !important; width: 100% !important; }}
       #chooseBtn, #manualBtn, #processBtn {{ width: 100%; }}
 
+      .page-title {{ font-size: 24px; }}
       #heroTitle {{ font-size: 22px !important; }}
       #heroMeta {{ font-size: 13px !important; }}
-
-      #grid {{ grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)) !important; gap: 10px !important; }}
+      #grid {{ grid-template-columns: repeat(auto-fill, minmax(165px, 1fr)) !important; gap: 10px !important; }}
       #rails .panel {{ padding: 12px; }}
-      #rails [aria-label] {{ grid-auto-columns: minmax(170px, 72vw) !important; }}
+      #rails [aria-label] {{ grid-auto-columns: minmax(210px, 82vw) !important; }}
 
       #watchTitle {{ font-size: 22px !important; }}
       #watchMeta {{ font-size: 13px !important; }}
+      .detail-poster-wrap {{ max-width: none !important; }}
+      .detail-actions a, .detail-actions button {{ flex: 1; text-align: center; }}
     }}
   </style>
 </head>
@@ -180,7 +275,7 @@ ORGANIZE_HTML = _layout(
       <strong>Progress</strong>
       <span id="progressText" class="hint"></span>
     </div>
-    <div id="logs" style="background:#0d1629; color:#ccf7ea; font-family:ui-monospace, SFMono-Regular, Menlo, monospace; border-radius:10px; padding:10px; min-height:180px; max-height:220px; overflow:auto; white-space:pre-wrap; font-size:12px;"></div>
+    <div id="logs" style="background:#060b16; color:#bfeadf; font-family:ui-monospace, SFMono-Regular, Menlo, monospace; border-radius:10px; padding:10px; min-height:180px; max-height:220px; overflow:auto; white-space:pre-wrap; font-size:12px;"></div>
   </section>
 
   <section class="panel" style="margin-top:14px;">
@@ -256,7 +351,7 @@ ORGANIZE_HTML = _layout(
           <td style="padding:8px 6px;">${v.release_date || "-"}</td>
           <td style="padding:8px 6px;">${v.publisher || "-"}</td>
           <td style="padding:8px 6px; color:var(--muted);">${assets}</td>
-          <td style="padding:8px 6px;"><a href="/watch/${encodeURIComponent(v.jav_id)}">Play</a></td>
+          <td style="padding:8px 6px;"><a href="/video/${encodeURIComponent(v.jav_id)}">Open</a></td>
         `;
         historyBody.appendChild(tr);
       }
@@ -317,17 +412,17 @@ VIEW_HTML = _layout(
     "view",
     """
   <section class="panel" style="background: linear-gradient(120deg, #0f172a, #18243d); color:#e8eefc; border-color:#27344e;">
-    <div style="display:flex; gap:20px; justify-content:space-between; align-items:flex-end; flex-wrap:wrap;">
+    <div class="page-head">
       <div>
-        <p style="margin:0; font-size:12px; letter-spacing:.18em; text-transform:uppercase; color:#9eb4d9;">Viewing</p>
-        <h1 style="margin:4px 0 0; font-size:32px;">Your Local Streaming Shelf</h1>
+        <p class="page-kicker">View</p>
+        <h1 class="page-title">Your Local Streaming Shelf</h1>
       </div>
       <input id="searchInput" type="search" placeholder="Search by JAV ID or title" style="min-width:280px; max-width:460px; width:100%; background:#111b31; border-color:#304469; color:#eef5ff;" />
     </div>
   </section>
 
   <section id="hero" class="panel" style="margin-top:14px; background:#0d1426; border-color:#2b3b58; color:#eef4ff; display:none; padding:0; overflow:hidden;">
-    <div style="display:grid; grid-template-columns: minmax(220px, 34%) minmax(0, 1fr);">
+    <div id="heroSection" style="display:grid; grid-template-columns: minmax(220px, 34%) minmax(0, 1fr);">
       <div style="background:#121d34;">
         <img id="heroPoster" src="" alt="" style="width:100%; height:100%; object-fit:cover; display:block; min-height:260px;" />
       </div>
@@ -336,8 +431,8 @@ VIEW_HTML = _layout(
         <h2 id="heroTitle" style="margin:8px 0 0; font-size:28px; line-height:1.2;"></h2>
         <p id="heroMeta" style="margin:10px 0 0; color:#b9cbec; font-size:14px;"></p>
         <div style="margin-top:18px; display:flex; gap:10px; flex-wrap:wrap;">
-          <a id="heroPlay" href="#" style="text-decoration:none; background:#0f766e; color:#fff; border:1px solid #0f766e; padding:10px 14px; border-radius:10px; font-weight:700;">Play</a>
-          <a id="heroInfo" href="#" style="text-decoration:none; background:#1c2a45; color:#d6e3fb; border:1px solid #334766; padding:10px 14px; border-radius:10px;">Open Details</a>
+          <a id="heroInfo" href="#" style="text-decoration:none; background:#0f766e; color:#fff; border:1px solid #0f766e; padding:10px 14px; border-radius:10px; font-weight:700;">Open Details</a>
+          <a id="heroPlay" href="#" style="text-decoration:none; background:#1c2a45; color:#d6e3fb; border:1px solid #334766; padding:10px 14px; border-radius:10px;">Play Now</a>
         </div>
       </div>
     </div>
@@ -347,10 +442,10 @@ VIEW_HTML = _layout(
 
   <section class="panel" style="margin-top:14px;">
     <div style="display:flex; justify-content:space-between; gap:10px; align-items:center; margin-bottom:10px;">
-      <strong>Recommended</strong>
+      <strong>Catalog Grid</strong>
       <span class="hint" id="resultCount"></span>
     </div>
-    <div id="grid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(208px, 1fr)); gap:14px;"></div>
+    <div id="grid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(250px, 1fr)); gap:14px;"></div>
   </section>
 """,
     """
@@ -381,6 +476,9 @@ VIEW_HTML = _layout(
     function toWatch(v) {
       return "/watch/" + encodeURIComponent(v.jav_id);
     }
+    function toDetail(v) {
+      return "/video/" + encodeURIComponent(v.jav_id);
+    }
 
     function scoreVideo(v) {
       let score = 0;
@@ -409,21 +507,21 @@ VIEW_HTML = _layout(
       heroTitleEl.textContent = video.title ? (video.jav_id + " - " + video.title) : video.jav_id;
       heroMetaEl.textContent = [video.release_date || "Unknown date", video.publisher || "Unknown publisher"].join(" / ");
       heroPlayEl.href = toWatch(video);
-      heroInfoEl.href = toWatch(video);
+      heroInfoEl.href = toDetail(video);
       heroEl.style.display = "block";
     }
 
-    function cardMarkup(v, wide = false) {
-      const ratio = wide ? "16/9" : "2/3";
+    function cardMarkup(v) {
       return `
-        <div style="position:relative; aspect-ratio:${ratio}; background:#dbe3f2; overflow:hidden;">
+        <div class="card-thumb">
           <img src="${v.poster_url}" alt="${escapeHtml(v.title || "Untitled")}" loading="lazy" style="width:100%; height:100%; object-fit:cover; display:block;" />
           <video muted loop playsinline preload="none" src="${v.preview_url}" style="position:absolute; inset:0; width:100%; height:100%; object-fit:cover; opacity:0; transition:opacity .2s ease;"></video>
           <div style="position:absolute; inset:auto 0 0; padding:6px 8px; font-size:12px; color:#fff; background:linear-gradient(180deg, transparent, rgba(0,0,0,.75));">${escapeHtml(v.jav_id)}</div>
         </div>
-        <div style="padding:10px;">
-          <div style="font-weight:700; font-size:13px; line-height:1.3;">${escapeHtml(v.title || "Untitled")}</div>
-          <div class="hint" style="margin-top:4px;">${escapeHtml(v.release_date || "-")} ${escapeHtml(v.publisher || "")}</div>
+        <div class="card-meta">
+          <div class="pill">${escapeHtml(v.jav_id)}</div>
+          <div class="card-title">${escapeHtml(v.title || "Untitled")}</div>
+          <div class="card-sub">${escapeHtml(v.release_date || "-")} ${escapeHtml(v.publisher || "")}</div>
         </div>
       `;
     }
@@ -445,20 +543,11 @@ VIEW_HTML = _layout(
       });
     }
 
-    function makeCard(v, wide = false) {
+    function makeCard(v) {
       const card = document.createElement("a");
-      card.href = toWatch(v);
-      card.style.textDecoration = "none";
-      card.style.color = "inherit";
-      card.style.border = "1px solid var(--line)";
-      card.style.background = "#fff";
-      card.style.borderRadius = "12px";
-      card.style.overflow = "hidden";
-      card.style.display = "block";
-      card.style.transform = "translateY(0)";
-      card.style.transition = "transform .18s ease, box-shadow .18s ease";
-      card.style.minWidth = wide ? "260px" : "";
-      card.innerHTML = cardMarkup(v, wide);
+      card.href = toDetail(v);
+      card.className = "card";
+      card.innerHTML = cardMarkup(v);
       attachCardEffects(card);
       return card;
     }
@@ -483,19 +572,6 @@ VIEW_HTML = _layout(
         .sort((a, b) => (b.release_date || "").localeCompare(a.release_date || ""))
         .slice(0, 12);
       if (recent.length) rows.push({name: "Recently Released", items: recent});
-
-      const byPublisher = new Map();
-      for (const v of videos) {
-        const key = (v.publisher || "Unknown").trim();
-        if (!byPublisher.has(key)) byPublisher.set(key, []);
-        byPublisher.get(key).push(v);
-      }
-      const topPublishers = [...byPublisher.entries()]
-        .sort((a, b) => b[1].length - a[1].length)
-        .slice(0, 2);
-      for (const [publisher, items] of topPublishers) {
-        rows.push({name: publisher + " Picks", items: items.slice(0, 12)});
-      }
 
       for (const row of rows) {
         const section = document.createElement("section");
@@ -528,7 +604,7 @@ VIEW_HTML = _layout(
         scroller.addEventListener("focus", () => { activeRailScroller = scroller; });
 
         for (const v of row.items) {
-          scroller.appendChild(makeCard(v, true));
+          scroller.appendChild(makeCard(v));
         }
         const buttons = title.querySelectorAll("button[data-dir]");
         for (const btn of buttons) {
@@ -550,7 +626,7 @@ VIEW_HTML = _layout(
       gridEl.innerHTML = "";
       resultCount.textContent = videos.length + " title(s)";
       for (const v of videos) {
-        gridEl.appendChild(makeCard(v, true));
+        gridEl.appendChild(makeCard(v));
       }
     }
 
@@ -594,13 +670,111 @@ VIEW_HTML = _layout(
 )
 
 
+VIDEO_HTML = _layout(
+    "Video __JAV_ID__",
+    "view",
+    """
+  <section class="panel" style="background:linear-gradient(120deg, #0d1426, #17243e); color:#ebf2ff; border-color:#2f425f;">
+    <div class="page-head">
+      <div>
+        <p class="page-kicker">Video Details</p>
+        <h1 id="detailTitle" class="page-title">__JAV_ID__</h1>
+      </div>
+      <div class="detail-actions" style="display:flex; gap:10px; flex-wrap:wrap;">
+        <button id="detailPlayBtn" type="button" class="primary" style="padding:10px 14px; font-weight:700;">Play Full Video</button>
+        <a id="theaterLink" href="/watch/__JAV_ID__" style="text-decoration:none; background:#0f766e; color:#fff; border:1px solid #0f766e; padding:10px 14px; border-radius:10px; font-weight:700;">Open Theater Mode</a>
+        <a href="/view" style="text-decoration:none; background:#1c2a45; color:#d6e3fb; border:1px solid #334766; padding:10px 14px; border-radius:10px;">Back to Grid</a>
+      </div>
+    </div>
+    <p id="detailMeta" style="margin:10px 0 0; color:#bed0f0; font-size:14px;"></p>
+  </section>
+
+  <section class="detail-layout" style="display:grid; grid-template-columns:minmax(0, 1.8fr) minmax(290px, 1fr); gap:14px; margin-top:14px;">
+    <article class="panel detail-poster-wrap" style="padding:0; overflow:hidden; position:relative;">
+      <div id="heroMediaWrap" style="position:relative; width:100%; aspect-ratio:16 / 9; background:#050a14;">
+        <img id="detailPoster" src="/api/poster?id=__JAV_ID__" alt="__JAV_ID__ poster" style="display:block; width:100%; height:100%; object-fit:cover; background:#0a1120;" />
+      </div>
+      <div style="position:absolute; inset:auto 12px 12px auto; background:rgba(5,10,20,.72); border:1px solid #2f425f; color:#d8e6ff; border-radius:999px; font-size:11px; padding:4px 8px;">Poster</div>
+    </article>
+    <article class="panel">
+      <h2 style="margin:0; font-size:18px;">Quick Preview</h2>
+      <p class="hint" style="margin:8px 0 14px;">Start with preview first. Load full playback only when you want to watch.</p>
+      <video id="detailPreview" muted loop autoplay playsinline controls preload="metadata" src="/api/preview?id=__JAV_ID__" style="width:100%; border-radius:10px; background:#000; aspect-ratio:16 / 9;"></video>
+      <div style="margin-top:14px; display:grid; gap:8px;">
+        <div class="hint"><strong style="color:#cfe0ff;">JAV ID:</strong> __JAV_ID__</div>
+        <div class="hint" id="detailStatus">Ready to play full video.</div>
+      </div>
+    </article>
+  </section>
+""",
+    """
+  <script>
+    async function get(url) {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(res.statusText);
+      return res.json();
+    }
+
+    async function initDetail() {
+      try {
+        const data = await get("/api/video?id=__JAV_ID__");
+        if (!data || !data.jav_id) return;
+        const title = data.title ? data.jav_id + " - " + data.title : data.jav_id;
+        document.getElementById("detailTitle").textContent = title;
+        const bits = [data.release_date || null, data.publisher || null].filter(Boolean);
+        document.getElementById("detailMeta").textContent = bits.join(" / ");
+        document.title = "Video " + title;
+      } catch (err) {
+        document.getElementById("detailMeta").textContent = "Metadata unavailable.";
+      }
+    }
+
+    function loadMainVideo() {
+      const wrap = document.getElementById("heroMediaWrap");
+      const statusEl = document.getElementById("detailStatus");
+      if (!wrap || wrap.dataset.loaded === "1") return;
+      const video = document.createElement("video");
+      video.controls = true;
+      video.autoplay = true;
+      video.playsInline = true;
+      video.src = "/api/local-video?id=__JAV_ID__";
+      video.style.display = "block";
+      video.style.width = "100%";
+      video.style.height = "100%";
+      video.style.objectFit = "contain";
+      video.style.background = "#000";
+      wrap.innerHTML = "";
+      wrap.appendChild(video);
+      wrap.dataset.loaded = "1";
+      statusEl.textContent = "Full video loaded in player.";
+    }
+
+    document.getElementById("detailPlayBtn").addEventListener("click", loadMainVideo);
+    const detailPreview = document.getElementById("detailPreview");
+    if (detailPreview) {
+      detailPreview.play().catch(() => {});
+    }
+    initDetail();
+  </script>
+""",
+)
+
+
 WATCH_HTML = _layout(
     "Watch __JAV_ID__",
     "view",
     """
   <section class="panel" style="background:linear-gradient(120deg, #0d1426, #17243e); color:#ebf2ff; border-color:#2f425f;">
-    <p style="margin:0; font-size:12px; letter-spacing:.18em; text-transform:uppercase; color:#9db5de;">Now Playing</p>
-    <h1 id="watchTitle" style="margin:6px 0 0; font-size:28px;">__JAV_ID__</h1>
+    <div class="page-head">
+      <div>
+        <p class="page-kicker">Now Playing</p>
+        <h1 id="watchTitle" class="page-title">__JAV_ID__</h1>
+      </div>
+      <div style="display:flex; gap:10px; flex-wrap:wrap;">
+        <a href="/video/__JAV_ID__" style="text-decoration:none; background:#1c2a45; color:#d6e3fb; border:1px solid #334766; padding:10px 14px; border-radius:10px;">Video Details</a>
+        <a href="/view" style="text-decoration:none; background:#1c2a45; color:#d6e3fb; border:1px solid #334766; padding:10px 14px; border-radius:10px;">Back to Grid</a>
+      </div>
+    </div>
     <p id="watchMeta" style="margin:6px 0 0; color:#bed0f0; font-size:14px;"></p>
   </section>
 

@@ -11,7 +11,7 @@ from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from ..config import MEDIA_DIR, open_db
 from .dialogs import choose_directory_dialog
-from .pages import ORGANIZE_HTML, VIEW_HTML, WATCH_HTML
+from .pages import ORGANIZE_HTML, VIDEO_HTML, VIEW_HTML, WATCH_HTML
 from .processor import process_queue
 from .scanner import scan_video_files
 from .state import AppState
@@ -159,6 +159,10 @@ class AppHandler(BaseHTTPRequestHandler):
             return
         if path == "/view":
             self._text(VIEW_HTML)
+            return
+        if path.startswith("/video/"):
+            jav_id = unquote(path.split("/video/", 1)[1]).upper()
+            self._text(VIDEO_HTML.replace("__JAV_ID__", jav_id))
             return
         if path.startswith("/watch/"):
             jav_id = unquote(path.split("/watch/", 1)[1]).upper()
