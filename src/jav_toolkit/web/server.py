@@ -184,10 +184,20 @@ class AppHandler(BaseHTTPRequestHandler):
             try:
                 row = conn.execute(
                     """
-                    SELECT jav_id, title, release_date, publisher, local_video_path,
-                           poster_url, preview_mp4_url
-                    FROM videos
-                    WHERE jav_id=?
+                    SELECT v.jav_id, v.title, v.plot, v.release_date, v.duration_min,
+                           v.cover_url, v.page_url, v.publisher, v.label, v.series,
+                           v.director, v.rating, v.poster_url, v.preview_gif_url,
+                           v.preview_mp4_url, v.screenshots_json, v.fetched_at,
+                           v.local_video_path,
+                           GROUP_CONCAT(DISTINCT a.name) AS actresses,
+                           GROUP_CONCAT(DISTINCT g.name) AS genres
+                    FROM videos v
+                    LEFT JOIN video_actresses va ON va.video_id = v.id
+                    LEFT JOIN actresses a ON a.id = va.actress_id
+                    LEFT JOIN video_genres vg ON vg.video_id = v.id
+                    LEFT JOIN genres g ON g.id = vg.genre_id
+                    WHERE v.jav_id=?
+                    GROUP BY v.id
                     """,
                     (jav_id,),
                 ).fetchone()
@@ -196,15 +206,35 @@ class AppHandler(BaseHTTPRequestHandler):
             if not row:
                 self.send_error(404, "video not found")
                 return
+            actresses = [x.strip() for x in (row["actresses"] or "").split(",") if x.strip()]
+            genres = [x.strip() for x in (row["genres"] or "").split(",") if x.strip()]
+            try:
+                screenshots = json.loads(row["screenshots_json"] or "[]")
+            except Exception:
+                screenshots = []
             self._json(
                 {
                     "jav_id": row["jav_id"],
                     "title": row["title"],
+                    "plot": row["plot"],
                     "release_date": row["release_date"],
+                    "duration_min": row["duration_min"],
+                    "cover_url": row["cover_url"],
+                    "page_url": row["page_url"],
                     "publisher": row["publisher"],
+                    "label": row["label"],
+                    "series": row["series"],
+                    "director": row["director"],
+                    "rating": row["rating"],
                     "has_local_video": bool(row["local_video_path"]),
                     "poster_url": f"/api/poster?id={quote(row['jav_id'])}",
                     "preview_url": f"/api/preview?id={quote(row['jav_id'])}",
+                    "preview_gif_url": row["preview_gif_url"],
+                    "preview_mp4_url": row["preview_mp4_url"],
+                    "actresses": actresses,
+                    "genres": genres,
+                    "screenshots": screenshots,
+                    "fetched_at": row["fetched_at"],
                 }
             )
             return

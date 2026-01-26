@@ -202,6 +202,49 @@ def _layout(title: str, active: str, content: str, script: str = "") -> str:
       padding: 2px 8px;
       width: fit-content;
     }}
+    .fact-grid {{
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px 12px;
+    }}
+    .fact {{
+      background: #0b1527;
+      border: 1px solid #273b5b;
+      border-radius: 10px;
+      padding: 8px 10px;
+    }}
+    .fact-label {{
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      color: #90a8d0;
+      margin: 0 0 4px;
+    }}
+    .fact-value {{
+      font-size: 13px;
+      color: #e1eaff;
+      word-break: break-word;
+    }}
+    .chip-list {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }}
+    .chip {{
+      font-size: 12px;
+      border: 1px solid #2b3e60;
+      background: #111d31;
+      color: #cfe0ff;
+      border-radius: 999px;
+      padding: 4px 9px;
+    }}
+    .plot {{
+      margin: 0;
+      font-size: 13px;
+      line-height: 1.5;
+      color: #cad8f2;
+      white-space: pre-wrap;
+    }}
 
     @media (max-width: 1020px) {{
       #heroSection {{ grid-template-columns: 1fr !important; }}
@@ -209,6 +252,7 @@ def _layout(title: str, active: str, content: str, script: str = "") -> str:
       #searchInput {{ max-width: none !important; }}
       .detail-layout {{ grid-template-columns: 1fr !important; }}
       .detail-poster-wrap {{ max-width: none; }}
+      .fact-grid {{ grid-template-columns: 1fr; }}
     }}
 
     @media (max-width: 760px) {{
@@ -706,6 +750,23 @@ VIDEO_HTML = _layout(
       </div>
     </article>
   </section>
+
+  <section class="panel" style="margin-top:14px;">
+    <h2 style="margin:0 0 10px; font-size:18px;">Metadata</h2>
+    <div id="detailFacts" class="fact-grid"></div>
+    <div style="margin-top:14px;">
+      <div class="fact-label">Actresses</div>
+      <div id="detailActresses" class="chip-list"></div>
+    </div>
+    <div style="margin-top:12px;">
+      <div class="fact-label">Tags</div>
+      <div id="detailGenres" class="chip-list"></div>
+    </div>
+    <div style="margin-top:12px;">
+      <div class="fact-label">Plot</div>
+      <p id="detailPlot" class="plot">-</p>
+    </div>
+  </section>
 """,
     """
   <script>
@@ -713,6 +774,60 @@ VIDEO_HTML = _layout(
       const res = await fetch(url);
       if (!res.ok) throw new Error(res.statusText);
       return res.json();
+    }
+
+    function escapeHtml(text) {
+      return (text || "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+    }
+
+    function renderChips(containerId, items) {
+      const el = document.getElementById(containerId);
+      if (!el) return;
+      el.innerHTML = "";
+      const values = Array.isArray(items) ? items.filter(Boolean) : [];
+      if (!values.length) {
+        const none = document.createElement("span");
+        none.className = "hint";
+        none.textContent = "-";
+        el.appendChild(none);
+        return;
+      }
+      for (const item of values) {
+        const chip = document.createElement("span");
+        chip.className = "chip";
+        chip.textContent = item;
+        el.appendChild(chip);
+      }
+    }
+
+    function renderFacts(data) {
+      const factsEl = document.getElementById("detailFacts");
+      if (!factsEl) return;
+      const facts = [
+        ["JAV ID", data.jav_id, false],
+        ["Release Date", data.release_date, false],
+        ["Duration", data.duration_min ? (data.duration_min + " min") : null, false],
+        ["Publisher", data.publisher, false],
+        ["Label", data.label, false],
+        ["Series", data.series, false],
+        ["Director", data.director, false],
+        ["Rating", data.rating != null ? String(data.rating) : null, false],
+        ["Has Local Video", data.has_local_video ? "Yes" : "No", false],
+        ["Screenshots", Array.isArray(data.screenshots) ? String(data.screenshots.length) : "0", false],
+        ["Fetched At", data.fetched_at, false],
+        ["Source", data.page_url ? `<a href="${escapeHtml(data.page_url)}" target="_blank" rel="noopener noreferrer">Open source page</a>` : "-", true],
+      ];
+      factsEl.innerHTML = "";
+      for (const [label, value, isHtml] of facts) {
+        const rendered = value ? (isHtml ? value : escapeHtml(value)) : "-";
+        const fact = document.createElement("div");
+        fact.className = "fact";
+        fact.innerHTML = `
+          <p class="fact-label">${escapeHtml(label)}</p>
+          <div class="fact-value">${rendered}</div>
+        `;
+        factsEl.appendChild(fact);
+      }
     }
 
     async function initDetail() {
@@ -723,6 +838,10 @@ VIDEO_HTML = _layout(
         document.getElementById("detailTitle").textContent = title;
         const bits = [data.release_date || null, data.publisher || null].filter(Boolean);
         document.getElementById("detailMeta").textContent = bits.join(" / ");
+        document.getElementById("detailPlot").textContent = data.plot || "-";
+        renderChips("detailActresses", data.actresses || []);
+        renderChips("detailGenres", data.genres || []);
+        renderFacts(data);
         document.title = "Video " + title;
       } catch (err) {
         document.getElementById("detailMeta").textContent = "Metadata unavailable.";
