@@ -5,6 +5,7 @@ import json
 import mimetypes
 import re
 import threading
+from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlparse
@@ -23,6 +24,22 @@ def _first_existing(patterns: list[Path]) -> Path | None:
         if matches:
             return matches[0]
     return None
+
+
+def _parse_iso_date(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").replace(tzinfo=UTC)
+    except Exception:
+        return None
+
+
+def _to_float(value, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except Exception:
+        return default
 
 
 class AppHandler(BaseHTTPRequestHandler):
@@ -110,15 +127,102 @@ class AppHandler(BaseHTTPRequestHandler):
     def _query(self) -> dict[str, list[str]]:
         return parse_qs(urlparse(self.path).query)
 
+    def _recommendation_score(self, row: dict) -> float:
+        now = datetime.now(UTC)
+        score = 0.0
+        if row.get("has_local_video"):
+            score += 8.0
+        if row.get("has_preview_local"):
+            score += 3.0
+        if row.get("has_poster_local"):
+            score += 2.0
+
+        rating = _to_float(row.get("rating"), default=0.0)
+        if rating > 0:
+            score += min(rating, 5.0) * 0.9
+
+        release_dt = _parse_iso_date(row.get("release_date"))
+        if release_dt:
+            age_days = max(0, (now - release_dt).days)
+            score += max(0.0, 4.5 - (age_days / 80.0))
+
+        progress_percent = _to_float(row.get("progress_percent"), default=0.0)
+        if 3.0 <= progress_percent < 96.0:
+            score += 5.0
+        elif progress_percent >= 96.0:
+            score -= 1.5
+
+        return round(score, 3)
+
+    def _upsert_watch_progress(
+        self,
+        jav_id: str,
+        *,
+        position_sec: float,
+        duration_sec: float | None,
+        event: str,
+    ):
+        duration = duration_sec if duration_sec and duration_sec > 0 else None
+        position = max(position_sec, 0.0)
+        percent = 0.0
+        if duration:
+            percent = max(0.0, min(100.0, (position / duration) * 100.0))
+        elif event == "ended":
+            percent = 100.0
+
+        if event == "reset":
+            position = 0.0
+            percent = 0.0
+            state = "started"
+        elif event == "ended" or percent >= 96.0:
+            state = "completed"
+            percent = max(percent, 100.0 if event == "ended" else percent)
+        elif percent >= 3.0:
+            state = "in_progress"
+        else:
+            state = "started"
+
+        conn = open_db(self.state.db_path)
+        try:
+            conn.execute(
+                """
+                INSERT INTO watch_progress (jav_id, position_sec, duration_sec, percent, state, updated_at)
+                VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(jav_id) DO UPDATE SET
+                    position_sec=excluded.position_sec,
+                    duration_sec=excluded.duration_sec,
+                    percent=excluded.percent,
+                    state=excluded.state,
+                    updated_at=CURRENT_TIMESTAMP
+                """,
+                (jav_id, position, duration, percent, state),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
     def _load_videos(self) -> list[dict]:
         conn = open_db(self.state.db_path)
         try:
             rows = conn.execute("""
-                SELECT jav_id, title, release_date, publisher, local_video_path,
-                       poster_url, preview_mp4_url
-                FROM videos
-                WHERE local_video_path IS NOT NULL
-                ORDER BY release_date DESC, jav_id DESC
+                SELECT v.jav_id, v.title, v.release_date, v.publisher, v.local_video_path,
+                       v.poster_url, v.preview_mp4_url, v.rating, v.duration_min,
+                       GROUP_CONCAT(DISTINCT a.name) AS actresses,
+                       GROUP_CONCAT(DISTINCT g.name) AS genres,
+                       wp.position_sec AS progress_sec,
+                       wp.duration_sec AS progress_duration_sec,
+                       wp.percent AS progress_percent,
+                       wp.state AS watch_state,
+                       wp.updated_at AS progress_updated_at
+                FROM videos v
+                LEFT JOIN video_actresses va ON va.video_id = v.id
+                LEFT JOIN actresses a ON a.id = va.actress_id
+                LEFT JOIN video_genres vg ON vg.video_id = v.id
+                LEFT JOIN genres g ON g.id = vg.genre_id
+                LEFT JOIN watch_progress wp ON wp.jav_id = v.jav_id
+                WHERE v.local_video_path IS NOT NULL
+                GROUP BY v.id
+                ORDER BY v.release_date DESC, v.jav_id DESC
             """).fetchall()
             out: list[dict] = []
             for row in rows:
@@ -130,17 +234,30 @@ class AppHandler(BaseHTTPRequestHandler):
                     media_dir / "poster.webp",
                 ])
                 preview_local = media_dir / "preview.mp4"
-                out.append({
+                actresses = [x.strip() for x in (row["actresses"] or "").split(",") if x.strip()]
+                genres = [x.strip() for x in (row["genres"] or "").split(",") if x.strip()]
+                item = {
                     "jav_id": row["jav_id"],
                     "title": row["title"],
                     "release_date": row["release_date"],
                     "publisher": row["publisher"],
+                    "rating": row["rating"],
+                    "duration_min": row["duration_min"],
+                    "actresses": actresses,
+                    "genres": genres,
                     "has_local_video": bool(row["local_video_path"]),
                     "poster_url": f"/api/poster?id={quote(row['jav_id'])}",
                     "preview_url": f"/api/preview?id={quote(row['jav_id'])}",
                     "has_poster_local": bool(poster_local),
                     "has_preview_local": preview_local.exists(),
-                })
+                    "progress_sec": _to_float(row["progress_sec"], default=0.0),
+                    "progress_duration_sec": _to_float(row["progress_duration_sec"], default=0.0),
+                    "progress_percent": _to_float(row["progress_percent"], default=0.0),
+                    "watch_state": row["watch_state"] or None,
+                    "progress_updated_at": row["progress_updated_at"],
+                }
+                item["recommendation_score"] = self._recommendation_score(item)
+                out.append(item)
             return out
         finally:
             conn.close()
@@ -188,7 +305,8 @@ class AppHandler(BaseHTTPRequestHandler):
                            v.cover_url, v.page_url, v.publisher, v.label, v.series,
                            v.director, v.rating, v.poster_url, v.preview_gif_url,
                            v.preview_mp4_url, v.screenshots_json, v.fetched_at,
-                           v.local_video_path,
+                           v.local_video_path, wp.position_sec, wp.duration_sec,
+                           wp.percent, wp.state, wp.updated_at,
                            GROUP_CONCAT(DISTINCT a.name) AS actresses,
                            GROUP_CONCAT(DISTINCT g.name) AS genres
                     FROM videos v
@@ -196,6 +314,7 @@ class AppHandler(BaseHTTPRequestHandler):
                     LEFT JOIN actresses a ON a.id = va.actress_id
                     LEFT JOIN video_genres vg ON vg.video_id = v.id
                     LEFT JOIN genres g ON g.id = vg.genre_id
+                    LEFT JOIN watch_progress wp ON wp.jav_id = v.jav_id
                     WHERE v.jav_id=?
                     GROUP BY v.id
                     """,
@@ -235,6 +354,52 @@ class AppHandler(BaseHTTPRequestHandler):
                     "genres": genres,
                     "screenshots": screenshots,
                     "fetched_at": row["fetched_at"],
+                    "progress_sec": _to_float(row["position_sec"], default=0.0),
+                    "progress_duration_sec": _to_float(row["duration_sec"], default=0.0),
+                    "progress_percent": _to_float(row["percent"], default=0.0),
+                    "watch_state": row["state"] or None,
+                    "progress_updated_at": row["updated_at"],
+                }
+            )
+            return
+        if path == "/api/watch-progress":
+            q = self._query()
+            jav_id = (q.get("id") or [""])[0].upper()
+            if not jav_id:
+                self.send_error(400, "missing id")
+                return
+            conn = open_db(self.state.db_path)
+            try:
+                row = conn.execute(
+                    """
+                    SELECT jav_id, position_sec, duration_sec, percent, state, updated_at
+                    FROM watch_progress
+                    WHERE jav_id=?
+                    """,
+                    (jav_id,),
+                ).fetchone()
+            finally:
+                conn.close()
+            if not row:
+                self._json(
+                    {
+                        "jav_id": jav_id,
+                        "position_sec": 0.0,
+                        "duration_sec": None,
+                        "percent": 0.0,
+                        "state": "started",
+                        "updated_at": None,
+                    }
+                )
+                return
+            self._json(
+                {
+                    "jav_id": row["jav_id"],
+                    "position_sec": _to_float(row["position_sec"], default=0.0),
+                    "duration_sec": _to_float(row["duration_sec"], default=0.0),
+                    "percent": _to_float(row["percent"], default=0.0),
+                    "state": row["state"] or "started",
+                    "updated_at": row["updated_at"],
                 }
             )
             return
@@ -378,6 +543,39 @@ class AppHandler(BaseHTTPRequestHandler):
                 thread = threading.Thread(target=process_queue, args=(self.state,), daemon=True)
                 self.state.worker = thread
                 thread.start()
+            self._json({"ok": True})
+            return
+
+        if path == "/api/watch-progress":
+            jav_id = str(body.get("id") or "").upper().strip()
+            if not jav_id:
+                self._json({"ok": False, "error": "missing id"}, 400)
+                return
+            conn = open_db(self.state.db_path)
+            try:
+                exists = conn.execute(
+                    "SELECT 1 FROM videos WHERE jav_id=?",
+                    (jav_id,),
+                ).fetchone()
+            finally:
+                conn.close()
+            if not exists:
+                self._json({"ok": False, "error": "video not found"}, 404)
+                return
+
+            position_sec = _to_float(body.get("position_sec"), default=0.0)
+            duration_value = body.get("duration_sec")
+            duration_sec = _to_float(duration_value, default=0.0) if duration_value is not None else None
+            event = str(body.get("event") or "progress").strip().lower()
+            if event not in {"progress", "ended", "reset"}:
+                event = "progress"
+
+            self._upsert_watch_progress(
+                jav_id,
+                position_sec=position_sec,
+                duration_sec=duration_sec,
+                event=event,
+            )
             self._json({"ok": True})
             return
 
