@@ -241,6 +241,22 @@ def _log_results(jav_id: str, r: dict):
 def download_media(jav_id: str, results: dict, base_dir: Path = MEDIA_DIR) -> dict:
     out_dir = base_dir / jav_id.upper()
     out_dir.mkdir(parents=True, exist_ok=True)
+    poster_existing = next(
+        (
+            path
+            for path in (
+                out_dir / "poster.jpg",
+                out_dir / "poster.jpeg",
+                out_dir / "poster.png",
+                out_dir / "poster.webp",
+            )
+            if path.exists() and path.stat().st_size > 500
+        ),
+        None,
+    )
+    preview_existing = out_dir / "preview.mp4"
+    if preview_existing.exists() and preview_existing.stat().st_size <= 500:
+        preview_existing = None
 
     session = requests.Session()
     session.headers.update({
@@ -276,12 +292,21 @@ def download_media(jav_id: str, results: dict, base_dir: Path = MEDIA_DIR) -> di
 
     saved: dict = {}
 
-    if results.get("poster"):
-        ext = Path(urlparse(results["poster"]).path).suffix or ".jpg"
-        saved["poster"] = dl(results["poster"], f"poster{ext}")
+    if poster_existing:
+        print(f"    [skip] poster (found local: {poster_existing.name})")
+        saved["poster"] = str(poster_existing)
 
+    if results.get("poster"):
+        if "poster" not in saved:
+            ext = Path(urlparse(results["poster"]).path).suffix or ".jpg"
+            saved["poster"] = dl(results["poster"], f"poster{ext}")
+
+    if preview_existing:
+        print("    [skip] preview.mp4 (found local)")
+        saved["preview_mp4"] = str(preview_existing)
     if results.get("preview_mp4"):
-        saved["preview_mp4"] = dl(results["preview_mp4"], "preview.mp4")
+        if "preview_mp4" not in saved:
+            saved["preview_mp4"] = dl(results["preview_mp4"], "preview.mp4")
 
     print(f"\n  Saved to: {out_dir}/")
     return saved
