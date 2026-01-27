@@ -201,6 +201,53 @@ class AppHandler(BaseHTTPRequestHandler):
         finally:
             conn.close()
 
+    def _recommendations_for(self, jav_id: str, limit: int = 12) -> list[dict]:
+        videos = self._load_videos()
+        if not videos:
+            return []
+        target = next((v for v in videos if v.get("jav_id") == jav_id), None)
+        if not target:
+            return sorted(
+                videos,
+                key=lambda v: _to_float(v.get("recommendation_score"), default=0.0),
+                reverse=True,
+            )[:limit]
+
+        target_genres = set(target.get("genres") or [])
+        target_actresses = set(target.get("actresses") or [])
+        target_publisher = target.get("publisher")
+        target_release = _parse_iso_date(target.get("release_date"))
+
+        ranked: list[tuple[float, dict]] = []
+        for item in videos:
+            if item.get("jav_id") == jav_id:
+                continue
+
+            score = _to_float(item.get("recommendation_score"), default=0.0)
+            item_genres = set(item.get("genres") or [])
+            item_actresses = set(item.get("actresses") or [])
+            overlap_genres = len(target_genres & item_genres)
+            overlap_actresses = len(target_actresses & item_actresses)
+            if overlap_genres:
+                score += overlap_genres * 1.2
+            if overlap_actresses:
+                score += overlap_actresses * 1.8
+            if target_publisher and item.get("publisher") == target_publisher:
+                score += 1.1
+
+            item_release = _parse_iso_date(item.get("release_date"))
+            if target_release and item_release:
+                day_gap = abs((target_release - item_release).days)
+                if day_gap <= 120:
+                    score += 1.4
+                elif day_gap <= 365:
+                    score += 0.8
+
+            ranked.append((score, item))
+
+        ranked.sort(key=lambda pair: pair[0], reverse=True)
+        return [item for _, item in ranked[:limit]]
+
     def _load_videos(self) -> list[dict]:
         conn = open_db(self.state.db_path)
         try:
@@ -290,6 +337,19 @@ class AppHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/videos":
             self._json(self._load_videos())
+            return
+        if path == "/api/recommendations":
+            q = self._query()
+            jav_id = (q.get("id") or [""])[0].upper()
+            if not jav_id:
+                self.send_error(400, "missing id")
+                return
+            limit_raw = (q.get("limit") or ["12"])[0]
+            try:
+                limit = max(1, min(30, int(limit_raw)))
+            except Exception:
+                limit = 12
+            self._json(self._recommendations_for(jav_id, limit=limit))
             return
         if path == "/api/video":
             q = self._query()
