@@ -92,9 +92,9 @@ def cmd_search(conn, query: str):
         LEFT JOIN video_genres vg ON vg.video_id = v.id
         LEFT JOIN genres g ON g.id = vg.genre_id
         WHERE v.jav_id LIKE ? OR v.title LIKE ? OR v.plot LIKE ?
-           OR a.name LIKE ? OR g.name LIKE ? OR v.publisher LIKE ?
+           OR a.name LIKE ? OR a.aliases_json LIKE ? OR g.name LIKE ? OR v.publisher LIKE ?
         ORDER BY v.release_date DESC
-    """, (q,)*6).fetchall()
+    """, (q,)*7).fetchall()
 
     if not rows:
         print(f'No results for "{query}"')

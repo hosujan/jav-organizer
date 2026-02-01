@@ -42,6 +42,33 @@ def _to_float(value, default: float = 0.0) -> float:
         return default
 
 
+def _parse_aliases(value: str | None) -> list[str]:
+    if not value:
+        return []
+    try:
+        items = json.loads(value)
+    except Exception:
+        return []
+    if not isinstance(items, list):
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        name = str(item).strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        out.append(name)
+    return out
+
+
+def _actress_display_name(primary: str, aliases_json: str | None) -> str:
+    aliases = [name for name in _parse_aliases(aliases_json) if name != primary]
+    if not aliases:
+        return primary
+    return f"{primary} ({' / '.join(aliases)})"
+
+
 class AppHandler(BaseHTTPRequestHandler):
     state: AppState
 
@@ -267,9 +294,8 @@ class AppHandler(BaseHTTPRequestHandler):
         conn = open_db(self.state.db_path)
         try:
             rows = conn.execute("""
-                SELECT v.jav_id, v.title, v.release_date, v.publisher, v.local_video_path,
+                SELECT v.id, v.jav_id, v.title, v.release_date, v.publisher, v.local_video_path,
                        v.poster_url, v.preview_mp4_url, v.rating, v.duration_min,
-                       GROUP_CONCAT(DISTINCT a.name) AS actresses,
                        GROUP_CONCAT(DISTINCT g.name) AS genres,
                        wp.position_sec AS progress_sec,
                        wp.duration_sec AS progress_duration_sec,
@@ -277,8 +303,6 @@ class AppHandler(BaseHTTPRequestHandler):
                        wp.state AS watch_state,
                        wp.updated_at AS progress_updated_at
                 FROM videos v
-                LEFT JOIN video_actresses va ON va.video_id = v.id
-                LEFT JOIN actresses a ON a.id = va.actress_id
                 LEFT JOIN video_genres vg ON vg.video_id = v.id
                 LEFT JOIN genres g ON g.id = vg.genre_id
                 LEFT JOIN watch_progress wp ON wp.jav_id = v.jav_id
@@ -286,6 +310,26 @@ class AppHandler(BaseHTTPRequestHandler):
                 GROUP BY v.id
                 ORDER BY v.release_date DESC, v.jav_id DESC
             """).fetchall()
+            video_ids = [row["id"] for row in rows]
+            actresses_by_video_id: dict[int, list[str]] = {}
+            if video_ids:
+                placeholders = ",".join("?" for _ in video_ids)
+                actress_rows = conn.execute(
+                    f"""
+                    SELECT va.video_id, a.name, a.aliases_json
+                    FROM video_actresses va
+                    JOIN actresses a ON a.id = va.actress_id
+                    WHERE va.video_id IN ({placeholders})
+                    ORDER BY va.video_id, a.name
+                    """,
+                    tuple(video_ids),
+                ).fetchall()
+                for actress_row in actress_rows:
+                    display = _actress_display_name(
+                        actress_row["name"],
+                        actress_row["aliases_json"],
+                    )
+                    actresses_by_video_id.setdefault(actress_row["video_id"], []).append(display)
             out: list[dict] = []
             for row in rows:
                 media_dir = self.state.media_dir / row["jav_id"]
@@ -296,7 +340,7 @@ class AppHandler(BaseHTTPRequestHandler):
                     media_dir / "poster.webp",
                 ])
                 preview_local = media_dir / "preview.mp4"
-                actresses = [x.strip() for x in (row["actresses"] or "").split(",") if x.strip()]
+                actresses = actresses_by_video_id.get(row["id"], [])
                 genres = [x.strip() for x in (row["genres"] or "").split(",") if x.strip()]
                 item = {
                     "jav_id": row["jav_id"],
@@ -385,11 +429,9 @@ class AppHandler(BaseHTTPRequestHandler):
                            v.preview_mp4_url, v.screenshots_json, v.fetched_at,
                            v.local_video_path, wp.position_sec, wp.duration_sec,
                            wp.percent, wp.state, wp.updated_at,
-                           GROUP_CONCAT(DISTINCT a.name) AS actresses,
                            GROUP_CONCAT(DISTINCT g.name) AS genres
                     FROM videos v
                     LEFT JOIN video_actresses va ON va.video_id = v.id
-                    LEFT JOIN actresses a ON a.id = va.actress_id
                     LEFT JOIN video_genres vg ON vg.video_id = v.id
                     LEFT JOIN genres g ON g.id = vg.genre_id
                     LEFT JOIN watch_progress wp ON wp.jav_id = v.jav_id
@@ -403,7 +445,25 @@ class AppHandler(BaseHTTPRequestHandler):
             if not row:
                 self.send_error(404, "video not found")
                 return
-            actresses = [x.strip() for x in (row["actresses"] or "").split(",") if x.strip()]
+            conn = open_db(self.state.db_path)
+            try:
+                actress_rows = conn.execute(
+                    """
+                    SELECT a.name, a.aliases_json
+                    FROM videos v
+                    JOIN video_actresses va ON va.video_id = v.id
+                    JOIN actresses a ON a.id = va.actress_id
+                    WHERE v.jav_id=?
+                    ORDER BY a.name
+                    """,
+                    (jav_id,),
+                ).fetchall()
+            finally:
+                conn.close()
+            actresses = [
+                _actress_display_name(actress_row["name"], actress_row["aliases_json"])
+                for actress_row in actress_rows
+            ]
             genres = [x.strip() for x in (row["genres"] or "").split(",") if x.strip()]
             try:
                 screenshots = json.loads(row["screenshots_json"] or "[]")
@@ -672,7 +732,12 @@ def main():
     )
     parser.add_argument("--db", default="jav.db")
     parser.add_argument("--media-dir", default=str(MEDIA_DIR))
-    parser.add_argument("--video-dir", help="Optional initial local video directory")
+    parser.add_argument(
+        "--video-dir",
+        "--dir",
+        dest="video_dir",
+        help="Optional initial local video directory",
+    )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
     args = parser.parse_args()
@@ -686,13 +751,20 @@ def main():
         candidate = Path(args.video_dir).expanduser().resolve()
         if candidate.exists() and candidate.is_dir():
             start_dir = candidate
+        else:
+            print(f"  [WARN] invalid directory ignored: {args.video_dir}")
     else:
+        chosen = choose_directory_dialog()
+        if chosen:
+            candidate = Path(chosen).expanduser().resolve()
+            if candidate.exists() and candidate.is_dir():
+                start_dir = candidate
         conn = open_db(state.db_path)
         try:
             raw = get_setting(conn, "last_video_dir")
         finally:
             conn.close()
-        if raw:
+        if not start_dir and raw:
             candidate = Path(raw).expanduser().resolve()
             if candidate.exists() and candidate.is_dir():
                 start_dir = candidate
