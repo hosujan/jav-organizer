@@ -40,5 +40,6 @@ Run local scanner/processor/player frontend.
 uv run jav-web
 uv run jav-web --db jav.db --media-dir ./media
 uv run jav-web --video-dir /path/to/local/videos
+uv run jav-web --dir /path/to/local/videos
 uv run jav-web --host 127.0.0.1 --port 8765
 ```
