@@ -1,11 +1,11 @@
 """
-jav-fetch — scrape metadata from missav.ws (Traditional Chinese) into SQLite.
+jav fetch info — scrape metadata from missav.ws (Traditional Chinese) into SQLite.
 Uses Playwright (real browser) to bypass Cloudflare on both search and detail pages.
 
 Usage:
-    jav-fetch MISM-410
-    jav-fetch MISM-410 ABW-123 SSIS-456
-    jav-fetch --file ids.txt
+    jav fetch info MISM-410
+    jav fetch info MISM-410 ABW-123 SSIS-456
+    jav fetch info --file ids.txt
 """
 
 from __future__ import annotations
@@ -387,15 +387,15 @@ def upsert_video(conn, data: dict) -> int:
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
-def main():
+def main(argv: list[str] | None = None, prog: str = "jav fetch info"):
     parser = argparse.ArgumentParser(
-        prog="jav-fetch",
+        prog=prog,
         description="Fetch JAV metadata from missav.ws → SQLite",
     )
     parser.add_argument("ids", nargs="*", help="JAV IDs  e.g. MISM-410")
     parser.add_argument("--file", "-f", help="Text file with one ID per line")
     parser.add_argument("--db", default="jav.db")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     ids = list(args.ids)
     if args.file:

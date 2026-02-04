@@ -725,9 +725,9 @@ class AppHandler(BaseHTTPRequestHandler):
         self.send_error(404, "not found")
 
 
-def main():
+def main(argv: list[str] | None = None, prog: str = "jav serve"):
     parser = argparse.ArgumentParser(
-        prog="jav-web",
+        prog=prog,
         description="Local frontend for directory scan, processing, and playback",
     )
     parser.add_argument("--db", default="jav.db")
@@ -740,7 +740,7 @@ def main():
     )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     state = AppState(
         db_path=Path(args.db),
