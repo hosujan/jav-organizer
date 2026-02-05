@@ -4,110 +4,175 @@ from __future__ import annotations
 
 import argparse
 import sys
-from collections.abc import Callable
 
 from . import db, media, scraper
+from .config import resolve_media_root
 from .web import server
 
-RunFunc = Callable[[list[str] | None, str], None]
 
-MENU_CHOICES: dict[str, tuple[str, RunFunc, str]] = {
-    "1": ("fetch info", scraper.main, "jav fetch info"),
-    "2": ("fetch media", media.main, "jav fetch media"),
-    "3": ("db", db.main, "jav db"),
-    "4": ("serve", server.main, "jav serve"),
-}
-
-
-def _build_parser() -> argparse.ArgumentParser:
+def _build_root_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="jav",
         description="Unified CLI for jav-toolkit",
     )
     sub = parser.add_subparsers(dest="command")
-
-    fetch = sub.add_parser("fetch", help="Fetch data workflows")
-    fetch_sub = fetch.add_subparsers(dest="fetch_command")
-    fetch_info = fetch_sub.add_parser("info", add_help=False, help="Fetch metadata")
-    fetch_info.add_argument("args", nargs=argparse.REMAINDER)
-    fetch_media = fetch_sub.add_parser("media", add_help=False, help="Fetch/download media assets")
-    fetch_media.add_argument("args", nargs=argparse.REMAINDER)
-
-    cmd_db = sub.add_parser("db", add_help=False, help="Query/export local database")
-    cmd_db.add_argument("args", nargs=argparse.REMAINDER)
-
-    cmd_serve = sub.add_parser("serve", add_help=False, help="Run local web frontend")
-    cmd_serve.add_argument("args", nargs=argparse.REMAINDER)
-
+    sub.add_parser("fetch", help="Fetch metadata/media workflows")
+    sub.add_parser("db", help="Query/export local database")
+    sub.add_parser("serve", help="Run local web frontend")
     return parser
 
 
-def _normalize_forwarded_args(args: list[str]) -> list[str]:
-    if args and args[0] == "--":
-        return args[1:]
-    return args
+def _build_fetch_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="jav fetch",
+        description="Fetch metadata and/or media. Default: run info then media.",
+    )
+    parser.add_argument("ids", nargs="*", help="JAV IDs, e.g. MISM-410")
+    parser.add_argument("--file", "-f", help="Text file with one ID per line")
+    parser.add_argument("--db", default="jav.db", help="SQLite database path")
+    parser.add_argument("--info", action="store_true", help="Run metadata fetch only")
+    parser.add_argument("--media", action="store_true", help="Run media fetch only")
+    parser.add_argument(
+        "--no-download",
+        action="store_true",
+        help="When running media step, update DB URLs only",
+    )
+    parser.add_argument(
+        "--media-dir",
+        help="Override media output directory (default: <selected_video_dir>/media)",
+    )
+    parser.add_argument(
+        "--video-dir",
+        "--dir",
+        dest="video_dir",
+        help="Selected local video directory used to derive <video_dir>/media",
+    )
+    return parser
 
 
-def _run_prompt() -> int:
+def _run_fetch(args: argparse.Namespace) -> None:
+    run_info = args.info or not (args.info or args.media)
+    run_media = args.media or not (args.info or args.media)
+
+    info_argv: list[str] = []
+    media_argv: list[str] = []
+
+    if args.file:
+        info_argv += ["--file", args.file]
+        media_argv += ["--file", args.file]
+    info_argv += ["--db", args.db]
+    media_argv += ["--db", args.db]
+
+    if args.no_download:
+        media_argv.append("--no-download")
+
+    if run_media:
+        media_root = resolve_media_root(
+            args.db,
+            video_dir=args.video_dir,
+            explicit_media_dir=args.media_dir,
+        )
+        if not media_root:
+            print("jav fetch: error: media directory not resolved")
+            print("Use --video-dir <path> or run `jav serve` and select a video directory first.")
+            raise SystemExit(2)
+        media_root.mkdir(parents=True, exist_ok=True)
+        media_argv += ["--media-dir", str(media_root)]
+        if args.video_dir:
+            media_argv += ["--video-dir", args.video_dir]
+
+    info_argv += list(args.ids)
+    media_argv += list(args.ids)
+
+    if run_info:
+        scraper.main(info_argv, prog="jav fetch --info")
+    if run_media:
+        media.main(media_argv, prog="jav fetch --media")
+
+
+def _prompt_fetch_mode() -> list[str] | None:
+    print("Fetch modes:")
+    print("  uv run jav fetch --info")
+    print("  uv run jav fetch --media")
+    print("  (no flag runs both: info then media)")
+    print("  1) --info")
+    print("  2) --media")
+    print("  3) both")
+    print("  q) back")
+    choice = input("Select [1-3/q]: ").strip().lower()
+    if choice == "q":
+        return None
+    if choice == "1":
+        return ["--info"]
+    if choice == "2":
+        return ["--media"]
+    if choice == "3":
+        return []
+    print("Invalid choice")
+    return None
+
+
+def _run_prompt() -> list[str] | None:
     if not sys.stdin.isatty():
         print("No command provided. Use --help for usage.")
-        return 1
+        raise SystemExit(1)
 
     print("Choose an action:")
-    for key, (label, _, _) in MENU_CHOICES.items():
-        print(f"  {key}) {label}")
+    print("  1) fetch")
+    print("  2) db")
+    print("  3) serve")
     print("  q) quit")
-
-    choice = input("Select [1-4/q]: ").strip().lower()
+    choice = input("Select [1-3/q]: ").strip().lower()
     if choice == "q":
-        return 0
-
-    selected = MENU_CHOICES.get(choice)
-    if not selected:
-        print("Invalid choice")
-        return 1
-
-    _, target, prog = selected
-    target([], prog=prog)
-    return 0
+        return None
+    if choice == "1":
+        fetch_mode_args = _prompt_fetch_mode()
+        if fetch_mode_args is None:
+            return None
+        return ["fetch", *fetch_mode_args]
+    if choice == "2":
+        return ["db"]
+    if choice == "3":
+        return ["serve"]
+    print("Invalid choice")
+    return None
 
 
 def main() -> None:
-    argv = sys.argv[1:]
+    argv = list(sys.argv[1:])
 
     if not argv:
-        raise SystemExit(_run_prompt())
+        prompted = _run_prompt()
+        if prompted is None:
+            return
+        argv = prompted
 
-    root_parser = _build_parser()
-
+    root_parser = _build_root_parser()
     if argv[0] in {"-h", "--help"}:
         root_parser.parse_args(["--help"])
         return
 
     command = argv[0]
-
     if command == "fetch":
-        if len(argv) == 1 or argv[1] in {"-h", "--help"}:
-            root_parser.parse_args(["fetch", "--help"])
-            return
-        fetch_command = argv[1]
-        rest = _normalize_forwarded_args(argv[2:])
-        if fetch_command == "info":
-            scraper.main(rest, prog="jav fetch info")
-            return
-        if fetch_command == "media":
-            media.main(rest, prog="jav fetch media")
-            return
-        print(f"jav fetch: error: invalid action '{fetch_command}'")
-        root_parser.parse_args(["fetch", "--help"])
-        raise SystemExit(2)
-
-    if command == "db":
-        db.main(_normalize_forwarded_args(argv[1:]), prog="jav db")
+        fetch_raw = argv[1:]
+        if any(flag in fetch_raw for flag in ("-h", "--help")):
+            info_mode = "--info" in fetch_raw
+            media_mode = "--media" in fetch_raw
+            if info_mode and not media_mode:
+                scraper.main(["--help"], prog="jav fetch --info")
+                return
+            if media_mode and not info_mode:
+                media.main(["--help"], prog="jav fetch --media")
+                return
+        fetch_parser = _build_fetch_parser()
+        fetch_args = fetch_parser.parse_args(fetch_raw)
+        _run_fetch(fetch_args)
         return
-
+    if command == "db":
+        db.main(argv[1:], prog="jav db")
+        return
     if command == "serve":
-        server.main(_normalize_forwarded_args(argv[1:]), prog="jav serve")
+        server.main(argv[1:], prog="jav serve")
         return
 
     print(f"jav: error: invalid command '{command}'")

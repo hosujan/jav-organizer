@@ -10,7 +10,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
-from ..config import MEDIA_DIR, get_setting, open_db, set_setting
+from ..config import MEDIA_DIR, get_setting, open_db, resolve_media_root, set_setting
 from .dialogs import choose_directory_dialog
 from .pages import ALL_TITLES_HTML, ORGANIZE_HTML, VIDEO_HTML, VIEW_HTML, WATCH_HTML
 from .processor import process_queue
@@ -661,6 +661,8 @@ class AppHandler(BaseHTTPRequestHandler):
             items = scan_video_files(folder)
             with self.state.lock:
                 self.state.selected_dir = folder
+                self.state.media_dir = (folder / "media").resolve()
+                self.state.media_dir.mkdir(parents=True, exist_ok=True)
                 self.state.items = items
                 self.state.processed = 0
                 self.state.total = len(items)
@@ -731,7 +733,7 @@ def main(argv: list[str] | None = None, prog: str = "jav serve"):
         description="Local frontend for directory scan, processing, and playback",
     )
     parser.add_argument("--db", default="jav.db")
-    parser.add_argument("--media-dir", default=str(MEDIA_DIR))
+    parser.add_argument("--media-dir")
     parser.add_argument(
         "--video-dir",
         "--dir",
@@ -742,9 +744,15 @@ def main(argv: list[str] | None = None, prog: str = "jav serve"):
     parser.add_argument("--port", type=int, default=8765)
     args = parser.parse_args(argv)
 
+    initial_media_dir = resolve_media_root(
+        args.db,
+        video_dir=args.video_dir,
+        explicit_media_dir=args.media_dir,
+    ) or MEDIA_DIR.resolve()
+    initial_media_dir.mkdir(parents=True, exist_ok=True)
     state = AppState(
         db_path=Path(args.db),
-        media_dir=Path(args.media_dir).expanduser().resolve(),
+        media_dir=initial_media_dir,
     )
     start_dir: Path | None = None
     if args.video_dir:
@@ -770,6 +778,8 @@ def main(argv: list[str] | None = None, prog: str = "jav serve"):
                 start_dir = candidate
 
     if start_dir:
+        state.media_dir = (start_dir / "media").resolve()
+        state.media_dir.mkdir(parents=True, exist_ok=True)
         state.selected_dir = start_dir
         state.items = scan_video_files(start_dir)
         state.total = len(state.items)

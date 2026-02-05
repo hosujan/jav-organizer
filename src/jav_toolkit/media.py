@@ -1,13 +1,13 @@
 """
-jav fetch media — download poster and preview MP4.
+jav fetch --media — download poster and preview MP4.
 Uses Playwright to intercept real CDN URLs, with smart filtering to reject
 ad/tracker URLs and a CDN-pattern prober as fallback.
 
 Usage:
-    jav fetch media MISM-410
-    jav fetch media MISM-410 ABW-123
-    jav fetch media --file ids.txt --no-download
-    jav fetch media MISM-410 --media-dir /Volumes/NAS/jav/media
+    jav fetch --media MISM-410
+    jav fetch --media MISM-410 ABW-123
+    jav fetch --media --file ids.txt --no-download
+    jav fetch --media MISM-410 --video-dir /path/to/videos
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from urllib.parse import urlparse
 
 import requests
 
-from .config import BASE_URL, DELAY, LANG, MEDIA_DIR, open_db
+from .config import BASE_URL, DELAY, LANG, MEDIA_DIR, open_db, resolve_media_root
 
 
 # ── CDN allow-list ────────────────────────────────────────────────────────────
@@ -238,9 +238,26 @@ def _log_results(jav_id: str, r: dict):
 
 # ── File downloader ───────────────────────────────────────────────────────────
 
-def download_media(jav_id: str, results: dict, base_dir: Path = MEDIA_DIR) -> dict:
+def download_media(
+    jav_id: str,
+    results: dict,
+    base_dir: Path = MEDIA_DIR,
+    *,
+    overwrite_existing: bool = False,
+) -> dict:
     out_dir = base_dir / jav_id.upper()
     out_dir.mkdir(parents=True, exist_ok=True)
+    if overwrite_existing:
+        for path in (
+            out_dir / "poster.jpg",
+            out_dir / "poster.jpeg",
+            out_dir / "poster.png",
+            out_dir / "poster.webp",
+            out_dir / "preview.mp4",
+        ):
+            if path.exists():
+                path.unlink()
+
     poster_existing = next(
         (
             path
@@ -272,7 +289,9 @@ def download_media(jav_id: str, results: dict, base_dir: Path = MEDIA_DIR) -> di
         if not url:
             return None
         dest = out_dir / name
-        if dest.exists() and dest.stat().st_size > 500:
+        if overwrite_existing and dest.exists():
+            dest.unlink()
+        if not overwrite_existing and dest.exists() and dest.stat().st_size > 500:
             print(f"    [skip] {name} (exists)")
             return str(dest)
         try:
@@ -332,7 +351,7 @@ def save_media_urls(conn, jav_id: str, results: dict):
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
-def main(argv: list[str] | None = None, prog: str = "jav fetch media"):
+def main(argv: list[str] | None = None, prog: str = "jav fetch --media"):
     parser = argparse.ArgumentParser(
         prog=prog,
         description="Download poster and preview MP4",
@@ -342,7 +361,13 @@ def main(argv: list[str] | None = None, prog: str = "jav fetch media"):
     parser.add_argument("--db", default="jav.db")
     parser.add_argument("--no-download", action="store_true",
                         help="Update DB with URLs only, skip downloading files")
-    parser.add_argument("--media-dir", default=str(MEDIA_DIR))
+    parser.add_argument("--media-dir")
+    parser.add_argument(
+        "--video-dir",
+        "--dir",
+        dest="video_dir",
+        help="Selected local video directory; media will be saved under <video_dir>/media",
+    )
     args = parser.parse_args(argv)
 
     ids = list(args.ids)
@@ -354,8 +379,18 @@ def main(argv: list[str] | None = None, prog: str = "jav fetch media"):
         parser.print_help()
         sys.exit(1)
 
-    conn       = open_db(args.db)
-    media_base = Path(args.media_dir)
+    conn = open_db(args.db)
+    media_root = resolve_media_root(
+        args.db,
+        video_dir=args.video_dir,
+        explicit_media_dir=args.media_dir,
+    )
+    if not media_root:
+        conn.close()
+        print("  [ERROR] media directory not resolved.")
+        print("  Use --video-dir <path> or run `jav serve` and select a video directory first.")
+        sys.exit(2)
+    media_root.mkdir(parents=True, exist_ok=True)
 
     for jav_id in ids:
         print(f"\n{'─'*50}\n{jav_id}")
@@ -363,7 +398,7 @@ def main(argv: list[str] | None = None, prog: str = "jav fetch media"):
             results = scrape_media_urls(jav_id)
             save_media_urls(conn, jav_id, results)
             if not args.no_download:
-                download_media(jav_id, results, media_base)
+                download_media(jav_id, results, media_root, overwrite_existing=True)
         except Exception as e:
             print(f"  [ERROR] {e}")
             import traceback; traceback.print_exc()
