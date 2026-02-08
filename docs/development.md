@@ -9,19 +9,19 @@ uv run playwright install chromium
 ## Run Commands During Development
 - Run scraper for one ID:
 ```bash
-uv run jav-fetch MISM-410
+uv run jav fetch --info MISM-410
 ```
 - Resolve/download media:
 ```bash
-uv run jav-media MISM-410
+uv run jav fetch --media MISM-410
 ```
 - Inspect DB:
 ```bash
-uv run jav-db --db jav.db list
+uv run jav db --db jav.db list
 ```
 - Start web app:
 ```bash
-uv run jav-web --db jav.db --media-dir ./media
+uv run jav serve --db jav.db --video-dir /path/to/local/videos
 ```
 
 ## Project Structure
@@ -78,10 +78,10 @@ uv run python -m compileall src/jav_toolkit/web/pages.py src/jav_toolkit/web/ser
 
 ## Release Checklist
 1. Run smoke checks:
-   - `uv run jav-fetch <sample-id>`
-   - `uv run jav-media <sample-id> --no-download`
-   - `uv run jav-db --db jav.db list`
-   - `uv run jav-web`
+   - `uv run jav fetch --info <sample-id>`
+   - `uv run jav fetch --media --no-download <sample-id>`
+   - `uv run jav db --db jav.db list`
+   - `uv run jav serve`
 2. Verify core web flows:
    - Organize scan/process
    - Browse and All Titles rendering

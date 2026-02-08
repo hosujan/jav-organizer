@@ -13,7 +13,7 @@ uv run playwright install chromium
 
 ## Run Web App
 ```bash
-uv run jav-web
+uv run jav serve
 ```
 
 Default URL: `http://127.0.0.1:8765`
@@ -26,7 +26,7 @@ Default URL: `http://127.0.0.1:8765`
 
 ## Quick CLI Examples
 ```bash
-uv run jav-fetch MISM-410
-uv run jav-media MISM-410
-uv run jav-db --db jav.db list
+uv run jav fetch --info MISM-410
+uv run jav fetch --media MISM-410
+uv run jav db --db jav.db list
 ```
