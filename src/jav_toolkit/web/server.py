@@ -715,14 +715,29 @@ class AppHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/process":
-            if self.state.selected_dir:
-                count = _rescan_selected_dir(self.state, self.state.selected_dir, reset_logs=False)
-                self.state.add_log(f"[SCAN] refreshed {count} file(s) before processing")
             with self.state.lock:
                 if self.state.processing:
                     self._json({"ok": False, "error": "processing already running"}, 400)
                     return
+                selected_dir = self.state.selected_dir
+                if not selected_dir:
+                    self._json({"ok": False, "error": "no selected source directory"}, 400)
+                    return
+                # Reserve processing state before re-scan to avoid concurrent /api/process races.
+                self.state.processing = True
+
+            try:
+                count = _rescan_selected_dir(self.state, selected_dir, reset_logs=False)
+                self.state.add_log(f"[SCAN] refreshed {count} file(s) before processing")
+            except Exception as e:
+                with self.state.lock:
+                    self.state.processing = False
+                self._json({"ok": False, "error": f"rescan failed: {e}"}, 500)
+                return
+
+            with self.state.lock:
                 if not self.state.items:
+                    self.state.processing = False
                     self._json({"ok": False, "error": "no scanned videos"}, 400)
                     return
                 thread = threading.Thread(target=process_queue, args=(self.state,), daemon=True)
