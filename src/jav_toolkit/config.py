@@ -87,8 +87,11 @@ def open_db(db_path: str | Path) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
     cols = {row["name"] for row in conn.execute("PRAGMA table_info(videos)").fetchall()}
-    if "local_video_path" not in cols:
-        conn.execute("ALTER TABLE videos ADD COLUMN local_video_path TEXT")
+    if "local_video_path" in cols:
+        try:
+            conn.execute("ALTER TABLE videos DROP COLUMN local_video_path")
+        except sqlite3.OperationalError:
+            pass
     actress_cols = {
         row["name"] for row in conn.execute("PRAGMA table_info(actresses)").fetchall()
     }

@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 
 from . import db, media, scraper
-from .config import resolve_media_root
 from .web import server
 
 
@@ -35,17 +35,12 @@ def _build_fetch_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--no-download",
         action="store_true",
-        help="When running media step, update DB URLs only",
+        help="When running media step, resolve URLs only",
     )
+    parser.add_argument("--save-db", action="store_true", help="When running media step, save media URLs to DB")
     parser.add_argument(
         "--media-dir",
-        help="Override media output directory (default: <selected_video_dir>/media)",
-    )
-    parser.add_argument(
-        "--video-dir",
-        "--dir",
-        dest="video_dir",
-        help="Selected local video directory used to derive <video_dir>/media",
+        help="Override media output directory (default: ./media in repository root)",
     )
     return parser
 
@@ -65,21 +60,13 @@ def _run_fetch(args: argparse.Namespace) -> None:
 
     if args.no_download:
         media_argv.append("--no-download")
+    if args.save_db:
+        media_argv.append("--save-db")
 
     if run_media:
-        media_root = resolve_media_root(
-            args.db,
-            video_dir=args.video_dir,
-            explicit_media_dir=args.media_dir,
-        )
-        if not media_root:
-            print("jav fetch: error: media directory not resolved")
-            print("Use --video-dir <path> or run `jav serve` and select a video directory first.")
-            raise SystemExit(2)
+        media_root = Path(args.media_dir).expanduser().resolve() if args.media_dir else Path("media").resolve()
         media_root.mkdir(parents=True, exist_ok=True)
         media_argv += ["--media-dir", str(media_root)]
-        if args.video_dir:
-            media_argv += ["--video-dir", args.video_dir]
 
     info_argv += list(args.ids)
     media_argv += list(args.ids)

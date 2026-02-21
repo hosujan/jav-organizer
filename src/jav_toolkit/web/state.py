@@ -11,6 +11,8 @@ class AppState:
     media_dir: Path
     selected_dir: Path | None = None
     items: list[dict] = field(default_factory=list)
+    video_index: dict[str, str] = field(default_factory=dict)
+    force_override: bool = False
     processing: bool = False
     processed: int = 0
     total: int = 0
@@ -34,5 +36,5 @@ class AppState:
                 "current": self.current,
                 "logs": list(self.logs[-80:]),
                 "items": list(self.items),
+                "force_override": self.force_override,
             }
-

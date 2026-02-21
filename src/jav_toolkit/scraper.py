@@ -417,12 +417,42 @@ def main(argv: list[str] | None = None, prog: str = "jav fetch --info"):
         data = fetch_detail(url, jav_id)
         if not data:
             continue
-        vid_id = upsert_video(conn, data)
-        print(f"  [OK] id={vid_id}  {data.get('title','')[:60]}")
+
+        existing = conn.execute(
+            "SELECT title, release_date, publisher, director, rating FROM videos WHERE jav_id=?",
+            (jav_id,),
+        ).fetchone()
+        print("  [DB ]")
+        if existing:
+            print(f"    title       : {existing['title'] or '—'}")
+            print(f"    release_date: {existing['release_date'] or '—'}")
+            print(f"    publisher   : {existing['publisher'] or '—'}")
+            print(f"    director    : {existing['director'] or '—'}")
+            print(f"    rating      : {existing['rating'] if existing['rating'] is not None else '—'}")
+        else:
+            print("    (no existing DB record)")
+        print("  [NEW]")
+        print(f"    title       : {data.get('title') or '—'}")
+        print(f"    release_date: {data.get('release_date') or '—'}")
+        print(f"    publisher   : {data.get('publisher') or '—'}")
+        print(f"    director    : {data.get('director') or '—'}")
+        print(f"    rating      : {data.get('rating') if data.get('rating') is not None else '—'}")
+
+        save = False
+        if sys.stdin.isatty():
+            answer = input("  Save fetched info to DB? [y/N]: ").strip().lower()
+            save = answer in {"y", "yes"}
+        else:
+            print("  [INFO] non-interactive mode: defaulting to not save.")
+        if save:
+            vid_id = upsert_video(conn, data)
+            print(f"  [OK] saved id={vid_id}")
+        else:
+            print("  [SKIP] not saved to DB")
         time.sleep(DELAY)
 
     conn.close()
-    print(f"\n✓ Done — {args.db}")
+    print(f"\n✓ Done — reviewed against {args.db}")
 
 
 if __name__ == "__main__":
