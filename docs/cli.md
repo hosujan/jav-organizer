@@ -1,21 +1,22 @@
 # CLI Reference
 
 ## `jav`
-Run without arguments to get an interactive action prompt.
+Run without arguments to launch an interactive shell.
 
 ```bash
 uv run jav
 ```
 
-Prompt actions:
-- `fetch`
-- `db`
-- `serve`
+Shell capabilities:
+- direct commands: `fetch ...`, `db ...`, `serve ...`
+- natural prompts: `get metadata for MISM-410`, `download media for ABW-123`
+- slash commands: `/help`, `/quit`
 
-When choosing `fetch`, mode options are:
-- `uv run jav fetch --info`
-- `uv run jav fetch --media`
-- no mode flag: run `--info` first, then `--media`
+Natural-language routing examples:
+- `MISM-410` → `jav fetch MISM-410` (info + media)
+- `metadata for MISM-410` → `jav fetch --info MISM-410`
+- `no-download preview for MISM-410` → `jav fetch --media --no-download MISM-410`
+- `stats` → `jav db stats`
 
 ## `jav fetch`
 Fetch metadata and/or media.
