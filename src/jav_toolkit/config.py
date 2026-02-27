@@ -86,19 +86,6 @@ def open_db(db_path: str | Path) -> sqlite3.Connection:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
-    cols = {row["name"] for row in conn.execute("PRAGMA table_info(videos)").fetchall()}
-    if "local_video_path" in cols:
-        try:
-            conn.execute("ALTER TABLE videos DROP COLUMN local_video_path")
-        except sqlite3.OperationalError:
-            pass
-    actress_cols = {
-        row["name"] for row in conn.execute("PRAGMA table_info(actresses)").fetchall()
-    }
-    if "aliases_json" not in actress_cols:
-        conn.execute(
-            "ALTER TABLE actresses ADD COLUMN aliases_json TEXT NOT NULL DEFAULT '[]'"
-        )
     conn.commit()
     return conn
 
