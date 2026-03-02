@@ -11,6 +11,7 @@ Shell capabilities:
 - direct commands: `fetch ...`, `db ...`, `serve ...`
 - natural prompts: `get metadata for MISM-410`, `download media for ABW-123`
 - slash commands: `/help`, `/clear`, `/quit`
+- shell UX: persistent command history (`~/.jav_cli_history`) + tab autocomplete
 
 Natural-language routing examples:
 - `MISM-410` → `jav fetch MISM-410` (info + media)
