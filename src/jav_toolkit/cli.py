@@ -55,9 +55,46 @@ def _clear_screen() -> None:
     os.system("cls" if os.name == "nt" else "clear")
 
 
+def _print_info_box() -> None:
+    version = "0.1.0"
+    cwd = os.getcwd()
+    home = str(Path.home())
+    display_cwd = cwd.replace(home, "~", 1) if cwd.startswith(home) else cwd
+
+    # Visual width matching the user's example
+    width = 60
+
+    # Truncate directory if too long for the box
+    max_dir_len = width - 15
+    if len(display_cwd) > max_dir_len:
+        display_cwd = "…" + display_cwd[-(max_dir_len - 1) :]
+
+    print(f"╭{'─' * (width - 2)}╮")
+
+    # Line 1: >_ jav-toolkit (v0.1.0)
+    line1 = f">_ jav-toolkit (v{version})"
+    print(f"│ {line1:<{width - 4}} │")
+
+    # Line 2: Spacer
+    print(f"│ {' ' * (width - 4)} │")
+
+    # Line 3: provider: MissAV (zh) /config to change
+    left3 = "provider:  MissAV (zh)"
+    right3 = "/config to change"
+    gap3 = (width - 4) - len(left3) - len(right3)
+    print(f"│ {left3}{' ' * gap3}{right3} │")
+
+    # Line 4: directory: ...
+    line4 = f"directory: {display_cwd}"
+    print(f"│ {line4:<{width - 4}} │")
+
+    print(f"╰{'─' * (width - 2)}╯")
+
+
 def _print_banner() -> None:
     print(_BANNER)
-    print("Type `/help` for commands, `/quit` to exit.")
+    _print_info_box()
+    print("\nType `/help` for commands, `/quit` to exit.")
 
 
 def _setup_readline() -> None:
