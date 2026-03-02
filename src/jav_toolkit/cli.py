@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import shlex
 import sys
@@ -12,6 +13,22 @@ from . import db, media, scraper
 from .web import server
 
 _ID_RE = re.compile(r"\b([A-Za-z]{2,10})[-_]?(\d{2,6})\b")
+_BANNER = r"""
+     __      ___     __      ________    __    ____
+    / /___ _/ / |   / /     / ____/ /   / /   /  _/
+   / / __ `/ /| |  / /_____/ /   / /   / /    / /
+  / / /_/ / / | | / /_____/ /___/ /___/ /____/ /
+ /_/\__,_/_/  |_|/_/      \____/_____/_____/___/
+"""
+
+
+def _clear_screen() -> None:
+    os.system("cls" if os.name == "nt" else "clear")
+
+
+def _print_banner() -> None:
+    print(_BANNER)
+    print("Type `/help` for commands, `/quit` to exit.")
 
 
 def _build_root_parser() -> argparse.ArgumentParser:
@@ -109,6 +126,7 @@ def _print_shell_help() -> None:
     print("")
     print("Slash commands:")
     print("  /help   show this help")
+    print("  /clear  clear screen and redraw banner")
     print("  /quit   exit shell")
 
 
@@ -172,6 +190,8 @@ def _parse_shell_input(raw: str) -> list[str] | None:
         cmd = text[1:].strip().lower()
         if cmd in {"quit", "exit", "q"}:
             return ["__quit__"]
+        if cmd in {"clear", "cls"}:
+            return ["__clear__"]
         if cmd in {"help", "h", "?"}:
             _print_shell_help()
             return None
@@ -181,6 +201,8 @@ def _parse_shell_input(raw: str) -> list[str] | None:
 
     if text.lower() in {"quit", "exit", "q"}:
         return ["__quit__"]
+    if text.lower() in {"clear", "cls"}:
+        return ["__clear__"]
     if text.lower() in {"help", "h", "?"}:
         _print_shell_help()
         return None
@@ -209,8 +231,8 @@ def _run_interactive_shell() -> None:
         print("No command provided. Use --help for usage.")
         raise SystemExit(1)
 
-    print("jav interactive shell")
-    print("Type `/help` for commands, `/quit` to exit.")
+    _clear_screen()
+    _print_banner()
 
     while True:
         try:
@@ -224,6 +246,10 @@ def _run_interactive_shell() -> None:
             continue
         if argv == ["__quit__"]:
             return
+        if argv == ["__clear__"]:
+            _clear_screen()
+            _print_banner()
+            continue
 
         try:
             _dispatch(argv)
