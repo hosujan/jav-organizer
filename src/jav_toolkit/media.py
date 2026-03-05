@@ -1,7 +1,9 @@
 """
-jav-media — download poster, screenshots, and preview GIF/MP4 via Playwright.
+jav-media — download poster, screenshots, and preview GIF/MP4.
+Uses Playwright to intercept real CDN URLs, with smart filtering to reject
+ad/tracker URLs and a CDN-pattern prober as fallback.
 
-Usage (after `uv run`):
+Usage:
     jav-media MISM-410
     jav-media MISM-410 ABW-123
     jav-media --file ids.txt --no-download
@@ -22,13 +24,37 @@ import requests
 from .config import BASE_URL, DELAY, LANG, MEDIA_DIR, open_db
 
 
-# ── Browser scraping via Playwright ──────────────────────────────────────────
+# ── CDN allow-list ────────────────────────────────────────────────────────────
+# Only accept image/media URLs from these domains.
+# Anything from ad networks, trackers, analytics is rejected.
+CDN_DOMAINS = {
+    "fourhoi.com",
+    "missav.ws",
+    "missav.com",
+    "fivetiu.com",   # alternate CDN seen on some titles
+    "sixtop.com",
+    "cdn.missav",
+}
+
+AD_DOMAINS = {
+    "myavlive.com", "go.myavlive.com",
+    "googletagmanager", "google-analytics", "doubleclick",
+    "amazon-adsystem", "ads.", "track.", "click.", "stat.",
+    "affiliate", "banner", "popup",
+}
+
+
+def _is_cdn_url(url: str) -> bool:
+    """True only if the URL comes from a known CDN domain."""
+    host = urlparse(url).netloc.lower()
+    if any(ad in host for ad in AD_DOMAINS):
+        return False
+    return any(cdn in host for cdn in CDN_DOMAINS)
+
+
+# ── Playwright browser scrape ─────────────────────────────────────────────────
 
 def scrape_media_urls(jav_id: str) -> dict:
-    """
-    Open a real Chromium browser, intercept all network requests,
-    and harvest every media asset URL for the given JAV ID.
-    """
     from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 
     page_url = f"{BASE_URL}/{LANG}/{jav_id.lower()}"
@@ -40,6 +66,7 @@ def scrape_media_urls(jav_id: str) -> dict:
     }
     captured: list[str] = []
 
+    print(f"  [BROWSER] {page_url}")
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=True,
@@ -55,82 +82,100 @@ def scrape_media_urls(jav_id: str) -> dict:
             extra_http_headers={"Accept-Language": "zh-TW,zh;q=0.9"},
         )
         page = ctx.new_page()
-        page.on("request", lambda req: captured.append(req.url))
+        page.on("request",  lambda req: captured.append(req.url))
+        page.on("response", lambda res: captured.append(res.url))   # also catch redirects
 
-        print(f"  [BROWSER] {page_url}")
         try:
             page.goto(page_url, wait_until="domcontentloaded", timeout=30_000)
-            page.wait_for_timeout(3_000)
+            page.wait_for_timeout(4_000)   # let lazy assets load
         except PWTimeout:
             print("  [WARN] page load timed out, parsing partial content")
 
         html = page.content()
 
-        # og:image → poster
+        # ── og:image → poster ─────────────────────────────────────────────
         og = page.query_selector('meta[property="og:image"]')
         if og:
-            results["poster"] = og.get_attribute("content")
+            val = og.get_attribute("content") or ""
+            if _is_cdn_url(val):
+                results["poster"] = val
 
-        # Fallback: CDN img tag
-        if not results["poster"]:
-            for img in page.query_selector_all("img"):
-                src = img.get_attribute("src") or img.get_attribute("data-src") or ""
-                if "fourhoi" in src or "cover" in src.lower():
-                    results["poster"] = src
-                    break
-
-        # Parse JS variables embedded in <script> blocks
+        # ── Parse all inline <script> blocks ─────────────────────────────
         _parse_js_vars(html, results)
 
-        # Classify captured network URLs
+        # ── Classify every intercepted network URL ────────────────────────
         _scan_network(captured, results)
 
-        # Screenshot <img> tags
+        # ── img tags (data-src for lazy-loaded ones) ──────────────────────
         seen: set[str] = set()
-        for img in page.query_selector_all("img"):
-            src = img.get_attribute("src") or img.get_attribute("data-src") or ""
-            if not src or src in seen:
+        for img in page.query_selector_all("img[src], img[data-src]"):
+            src = img.get_attribute("data-src") or img.get_attribute("src") or ""
+            if not src or src in seen or not _is_cdn_url(src):
                 continue
             seen.add(src)
-            if any(k in src.lower() for k in ["thumb", "screenshot", "sample", "cap", "snapshot"]):
+            sl = src.lower()
+            # Exclude the poster/cover itself from the screenshots list
+            if "cover" in sl:
+                if not results["poster"]:
+                    results["poster"] = src
+                continue
+            ext = Path(urlparse(src).path).suffix.lower()
+            if ext in (".jpg", ".jpeg", ".png", ".webp"):
                 if src not in results["screenshots"]:
                     results["screenshots"].append(src)
 
-        # Hover the player to trigger lazy GIF load
-        player = page.query_selector(".video-player, video, #player, [class*='player']")
-        if player and not results["preview_gif"]:
-            try:
-                player.hover()
-                page.wait_for_timeout(2_000)
-                _scan_network(captured, results)
-            except Exception:
-                pass
+        # ── Hover player to trigger GIF/preview load ──────────────────────
+        if not results["preview_gif"] and not results["preview_mp4"]:
+            player = page.query_selector(
+                "video, .video-player, #player, [class*='player'], [id*='player']"
+            )
+            if player:
+                try:
+                    player.hover()
+                    page.wait_for_timeout(2_500)
+                    _scan_network(captured, results)
+                except Exception:
+                    pass
 
         ctx.close()
         browser.close()
+
+    # ── CDN pattern prober (fallback) ─────────────────────────────────────
+    # If we found the poster URL we know the CDN base path, probe common patterns.
+    if results["poster"]:
+        _probe_cdn_patterns(jav_id, results)
 
     _log_results(jav_id, results)
     return results
 
 
-# ── URL classification helpers ────────────────────────────────────────────────
+# ── JS variable extraction ────────────────────────────────────────────────────
 
 def _parse_js_vars(html: str, results: dict):
-    _JS = {
-        "poster":      [
-            r'player_poster\s*=\s*["\']([^"\']+)["\']',
-            r'"poster"\s*:\s*"([^"]+)"',
+    """
+    missav embeds asset URLs directly in inline JS, e.g.:
+        var player_poster = "https://fourhoi.com/mism-410/cover-n.jpg"
+        var preview_gif   = "https://fourhoi.com/mism-410/preview.gif"
+        var video_url     = [...]
+    """
+    _patterns = {
+        "poster": [
+            r'player_poster\s*[=:]\s*["\']([^"\']+)["\']',
+            r'"poster"\s*:\s*"([^"\']+)"',
+            r"poster\s*[=:]\s*['\"]([^'\"]+)['\"]",
         ],
         "preview_gif": [
-            r'preview_gif\s*=\s*["\']([^"\']+\.gif)["\']',
-            r'["\']([^"\']+\.gif)["\']',
+            r'preview_gif\s*[=:]\s*["\']([^"\']+\.gif)["\']',
+            r'preview\s*[=:]\s*["\']([^"\']+\.gif)["\']',
         ],
         "preview_mp4": [
-            r'preview_video\s*=\s*["\']([^"\']+\.mp4)["\']',
-            r'"preview"\s*:\s*"([^"]+\.mp4)"',
+            r'preview_video\s*[=:]\s*["\']([^"\']+\.mp4)["\']',
+            r'preview\s*[=:]\s*["\']([^"\']+\.mp4)["\']',
+            r'"preview"\s*:\s*"([^"\']+\.mp4)"',
         ],
     }
-    for key, pats in _JS.items():
+
+    for key, pats in _patterns.items():
         if results.get(key):
             continue
         for pat in pats:
@@ -139,27 +184,35 @@ def _parse_js_vars(html: str, results: dict):
                 url = m.group(1)
                 if url.startswith("//"):
                     url = "https:" + url
-                if url.startswith("http"):
+                if url.startswith("http") and _is_cdn_url(url):
                     results[key] = url
                     break
 
-    # Screenshot arrays
-    for pat in [r'screenshots?\s*[=:]\s*\[([^\]]+)\]', r'sample_images?\s*[=:]\s*\[([^\]]+)\]']:
+    # Screenshot arrays in JS
+    for pat in [
+        r'screenshots?\s*[=:]\s*\[([^\]]+)\]',
+        r'sample_images?\s*[=:]\s*\[([^\]]+)\]',
+        r'thumbnails?\s*[=:]\s*\[([^\]]+)\]',
+    ]:
         m = re.search(pat, html, re.IGNORECASE)
         if m:
             for u in re.findall(r'["\']([^"\']+\.jpe?g)["\']', m.group(1)):
                 full = u if u.startswith("http") else "https:" + u.lstrip("/")
-                if full not in results["screenshots"]:
+                if _is_cdn_url(full) and full not in results["screenshots"]:
                     results["screenshots"].append(full)
 
 
+# ── Network URL classifier ────────────────────────────────────────────────────
+
 def _scan_network(captured: list[str], results: dict):
     for url in captured:
+        if not _is_cdn_url(url):
+            continue
         ul  = url.lower()
         ext = Path(urlparse(url).path).suffix.lower()
 
         if not results["poster"] and ext in (".jpg", ".jpeg", ".png", ".webp"):
-            if "fourhoi" in ul or "cover" in ul:
+            if "cover" in ul:
                 results["poster"] = url
 
         if not results["preview_gif"] and ext == ".gif":
@@ -169,17 +222,92 @@ def _scan_network(captured: list[str], results: dict):
             if any(k in ul for k in ["preview", "sample", "trailer"]):
                 results["preview_mp4"] = url
 
-        if ext in (".jpg", ".jpeg", ".png"):
-            if any(k in ul for k in ["thumb", "screenshot", "cap", "sample", "snapshot"]):
-                if url not in results["screenshots"]:
-                    results["screenshots"].append(url)
+        if ext in (".jpg", ".jpeg", ".png", ".webp") and "cover" not in ul:
+            if url not in results["screenshots"]:
+                results["screenshots"].append(url)
 
+
+# ── CDN pattern prober ────────────────────────────────────────────────────────
+
+def _probe_cdn_patterns(jav_id: str, results: dict):
+    """
+    Given a known poster URL like https://fourhoi.com/mism-410/cover-n.jpg,
+    derive the CDN base and probe common naming patterns for preview + screenshots.
+    Uses HEAD requests — fast, no big downloads.
+    """
+    poster_url = results["poster"]
+    # Extract base: https://fourhoi.com/mism-410/
+    parsed   = urlparse(poster_url)
+    base_dir = parsed.scheme + "://" + parsed.netloc + str(Path(parsed.path).parent) + "/"
+
+    session = requests.Session()
+    session.headers.update({
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/122.0.0.0 Safari/537.36"
+        ),
+        "Referer": f"{BASE_URL}/",
+    })
+
+    def probe(path: str) -> str | None:
+        url = base_dir + path
+        try:
+            r = session.head(url, timeout=8, allow_redirects=True)
+            if r.status_code == 200:
+                ct = r.headers.get("content-type", "")
+                cl = int(r.headers.get("content-length", 0))
+                if cl > 500:           # ignore near-empty responses
+                    return url
+        except Exception:
+            pass
+        return None
+
+    # Preview GIF
+    if not results["preview_gif"]:
+        for name in ["preview.gif", "preview.webp", f"{jav_id.lower()}.gif"]:
+            found = probe(name)
+            if found:
+                results["preview_gif"] = found
+                print(f"  [PROBE] preview gif → {found}")
+                break
+
+    # Preview MP4
+    if not results["preview_mp4"]:
+        for name in ["preview.mp4", "sample.mp4", f"{jav_id.lower()}_preview.mp4"]:
+            found = probe(name)
+            if found:
+                results["preview_mp4"] = found
+                print(f"  [PROBE] preview mp4 → {found}")
+                break
+
+    # Screenshots: try 1.jpg … 12.jpg and screenshot-N.jpg, thumb-N.jpg
+    if not results["screenshots"]:
+        candidates = (
+            [f"{i}.jpg"            for i in range(1, 13)] +
+            [f"screenshot-{i}.jpg" for i in range(1, 13)] +
+            [f"thumb-{i}.jpg"      for i in range(1, 13)] +
+            [f"sample-{i}.jpg"     for i in range(1, 13)]
+        )
+        for name in candidates:
+            found = probe(name)
+            if found and found not in results["screenshots"]:
+                results["screenshots"].append(found)
+                print(f"  [PROBE] screenshot → {found}")
+
+
+# ── Logging ───────────────────────────────────────────────────────────────────
 
 def _log_results(jav_id: str, r: dict):
-    print(f"  Poster      : {r['poster'] or '—'}")
-    print(f"  Preview GIF : {r['preview_gif'] or '—'}")
-    print(f"  Preview MP4 : {r['preview_mp4'] or '—'}")
-    print(f"  Screenshots : {len(r['screenshots'])}")
+    print(f"\n  Results for {jav_id}:")
+    print(f"    Poster      : {r['poster'] or '—'}")
+    print(f"    Preview GIF : {r['preview_gif'] or '—'}")
+    print(f"    Preview MP4 : {r['preview_mp4'] or '—'}")
+    print(f"    Screenshots : {len(r['screenshots'])}")
+    for i, s in enumerate(r["screenshots"][:6], 1):
+        print(f"      [{i}] {s}")
+    if len(r["screenshots"]) > 6:
+        print(f"      … and {len(r['screenshots']) - 6} more")
 
 
 # ── File downloader ───────────────────────────────────────────────────────────
@@ -202,15 +330,19 @@ def download_media(jav_id: str, results: dict, base_dir: Path = MEDIA_DIR) -> di
         if not url:
             return None
         dest = out_dir / name
-        if dest.exists():
-            print(f"    [skip] {name}")
+        if dest.exists() and dest.stat().st_size > 500:
+            print(f"    [skip] {name} (exists)")
             return str(dest)
         try:
             print(f"    [↓] {name}")
-            r = session.get(url, timeout=30, stream=True)
+            r = session.get(url, timeout=60, stream=True)
             r.raise_for_status()
-            dest.write_bytes(b"".join(r.iter_content(8192)))
-            print(f"         {dest.stat().st_size // 1024} KB")
+            data = b"".join(r.iter_content(65536))
+            if len(data) < 500:
+                print(f"    [WARN] {name} — response too small ({len(data)} B), skipping")
+                return None
+            dest.write_bytes(data)
+            print(f"         {dest.stat().st_size // 1024} KB  ✓")
             return str(dest)
         except Exception as e:
             print(f"    [ERR] {name}: {e}")
@@ -234,7 +366,7 @@ def download_media(jav_id: str, results: dict, base_dir: Path = MEDIA_DIR) -> di
         if local:
             saved["screenshots"].append(local)
 
-    print(f"  → {out_dir}/")
+    print(f"\n  Saved to: {out_dir}/")
     return saved
 
 
@@ -263,13 +395,13 @@ def save_media_urls(conn, jav_id: str, results: dict):
 def main():
     parser = argparse.ArgumentParser(
         prog="jav-media",
-        description="Download poster, screenshots and preview GIF/MP4",
+        description="Download poster, screenshots, and preview GIF/MP4",
     )
     parser.add_argument("ids", nargs="*")
     parser.add_argument("--file", "-f")
     parser.add_argument("--db", default="jav.db")
     parser.add_argument("--no-download", action="store_true",
-                        help="Only update DB with URLs; skip file downloads")
+                        help="Update DB with URLs only, skip downloading files")
     parser.add_argument("--media-dir", default=str(MEDIA_DIR))
     args = parser.parse_args()
 
