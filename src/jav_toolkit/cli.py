@@ -129,7 +129,13 @@ def _setup_readline() -> None:
         pass
 
     readline.set_completer(complete)
-    readline.parse_and_bind("tab: complete")
+    # Keep "-" and "/" inside tokens so flags and slash commands can complete.
+    readline.set_completer_delims(" \t\n")
+    doc = (readline.__doc__ or "").lower()
+    if "libedit" in doc:
+        readline.parse_and_bind("bind ^I rl_complete")
+    else:
+        readline.parse_and_bind("tab: complete")
     readline.set_history_length(1000)
 
     def _save_history() -> None:
