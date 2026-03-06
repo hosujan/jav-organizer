@@ -1111,6 +1111,14 @@ WATCH_HTML = _layout(
           <p class="fact-label" style="margin-top:0;">Playback Tips</p>
           <p class="hint" style="margin:0; line-height:1.6;">Use left/right arrow keys for seeking and space for play/pause. Streaming uses HTTP range requests from your local media file.</p>
         </div>
+
+        <div class="panel" style="padding:12px; background:rgba(11, 25, 41, 0.6); border-color:#335676; box-shadow:none;">
+          <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+            <p class="fact-label" style="margin:0;">Up Next</p>
+            <a href="/view" class="hint" style="font-size:12px;">See all</a>
+          </div>
+          <div id="upNextList" style="display:grid; gap:8px; margin-top:8px;"></div>
+        </div>
       </aside>
     </div>
   </section>
@@ -1139,6 +1147,14 @@ WATCH_HTML = _layout(
       return Number.isFinite(n) ? n : fallback;
     }
 
+    function escapeHtml(text) {
+      return (text || "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;");
+    }
+
     function formatDuration(sec) {
       const total = Math.max(0, Math.floor(safeNumber(sec, 0)));
       const h = Math.floor(total / 3600);
@@ -1155,6 +1171,7 @@ WATCH_HTML = _layout(
     const resumeBtn = document.getElementById("resumeBtn");
     const restartBtn = document.getElementById("restartBtn");
     const resumeText = document.getElementById("resumeText");
+    const upNextList = document.getElementById("upNextList");
 
     let resumeAt = 0;
     let lastSavedSec = -1;
@@ -1205,6 +1222,52 @@ WATCH_HTML = _layout(
       };
     }
 
+    function renderUpNext(items) {
+      if (!upNextList) return;
+      upNextList.innerHTML = "";
+      const list = Array.isArray(items) ? items : [];
+      if (!list.length) {
+        upNextList.innerHTML = '<p class="hint" style="margin:0;">No recommendations yet.</p>';
+        return;
+      }
+      for (const item of list.slice(0, 8)) {
+        const p = Math.max(0, Math.min(100, safeNumber(item.progress_percent, 0)));
+        const title = item.title || item.jav_id;
+        const row = document.createElement("a");
+        row.href = "/watch/" + encodeURIComponent(item.jav_id);
+        row.style.textDecoration = "none";
+        row.style.display = "grid";
+        row.style.gridTemplateColumns = "92px minmax(0, 1fr)";
+        row.style.gap = "8px";
+        row.style.border = "1px solid #35546f";
+        row.style.background = "rgba(19, 37, 56, 0.72)";
+        row.style.borderRadius = "10px";
+        row.style.overflow = "hidden";
+        row.innerHTML = `
+          <img src="${item.poster_url}" alt="${escapeHtml(item.jav_id)}" loading="lazy" style="width:100%; height:100%; min-height:56px; object-fit:cover; display:block;" />
+          <div style="padding:7px 8px;">
+            <div style="font-weight:700; font-size:12px; color:#e8f4ff; line-height:1.3;">${escapeHtml(item.jav_id)}</div>
+            <div class="hint" style="font-size:11px; margin-top:2px; line-height:1.35;">${escapeHtml(title)}</div>
+            <div style="margin-top:6px; height:3px; width:100%; border-radius:999px; overflow:hidden; background:rgba(191, 219, 254, 0.2);">
+              <div style="height:100%; width:${p}%; background:linear-gradient(90deg, #22d3ee, #14b8a6);"></div>
+            </div>
+          </div>
+        `;
+        upNextList.appendChild(row);
+      }
+    }
+
+    async function loadUpNext() {
+      try {
+        const rows = await get("/api/recommendations?id=__JAV_ID__&limit=8");
+        renderUpNext(rows);
+      } catch (error) {
+        if (upNextList) {
+          upNextList.innerHTML = '<p class="hint" style="margin:0;">Failed to load recommendations.</p>';
+        }
+      }
+    }
+
     async function initMeta() {
       try {
         const data = await get("/api/video?id=__JAV_ID__");
@@ -1242,6 +1305,7 @@ WATCH_HTML = _layout(
     });
 
     initMeta();
+    loadUpNext();
   </script>
 """,
 )
