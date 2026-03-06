@@ -176,6 +176,7 @@ _LABEL_MAP = {
 }
 _ACTRESS_KEYS = {"女優", "演員", "出演", "Cast"}
 _GENRE_KEYS   = {"類型", "標籤", "Tags", "Genre", "分類"}
+_ALIAS_SPLIT_RE = re.compile(r"[,/、，・;；]\s*")
 
 
 def _parse_meta_row(tag, text: str, data: dict):
@@ -250,6 +251,96 @@ def _parse_fallback(soup, data: dict):
             data["duration_min"] = int(m.group(1))
 
 
+def _unique_keep_order(values: list[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        item = value.strip()
+        if not item or item in seen:
+            continue
+        seen.add(item)
+        out.append(item)
+    return out
+
+
+def _expand_actress_names(raw_name: str) -> list[str]:
+    value = raw_name.strip()
+    if not value:
+        return []
+
+    # Handles forms like: "二葉惠麻 (二葉エマ)"
+    match = re.fullmatch(r"(.+?)\s*[（(]\s*(.+?)\s*[）)]\s*$", value)
+    if not match:
+        return [value]
+
+    primary = match.group(1).strip()
+    alias_text = match.group(2).strip()
+    aliases = _ALIAS_SPLIT_RE.split(alias_text) if alias_text else []
+    return _unique_keep_order([primary, *aliases])
+
+
+def _load_aliases(row) -> list[str]:
+    try:
+        data = json.loads(row["aliases_json"] or "[]")
+        if isinstance(data, list):
+            return [str(x).strip() for x in data if str(x).strip()]
+    except Exception:
+        pass
+    return []
+
+
+def _find_actress_row_by_any_name(conn, names: list[str]):
+    if not names:
+        return None
+
+    placeholders = ",".join("?" for _ in names)
+    row = conn.execute(
+        f"SELECT id, name, aliases_json FROM actresses WHERE name IN ({placeholders}) LIMIT 1",
+        tuple(names),
+    ).fetchone()
+    if row:
+        return row
+
+    # Fallback in Python to avoid requiring SQLite JSON1 extension features.
+    for actress in conn.execute("SELECT id, name, aliases_json FROM actresses").fetchall():
+        alias_set = set(_load_aliases(actress))
+        if any(name in alias_set for name in names):
+            return actress
+    return None
+
+
+def _upsert_actress(conn, raw_name: str) -> int:
+    names = _expand_actress_names(raw_name)
+    if not names:
+        raise ValueError("actress name is empty")
+
+    primary = names[0]
+    row = _find_actress_row_by_any_name(conn, names)
+    if not row:
+        aliases = _unique_keep_order([x for x in names[1:] if x != primary])
+        payload = json.dumps(aliases, ensure_ascii=False)
+        conn.execute(
+            "INSERT INTO actresses (name, aliases_json) VALUES (?, ?)",
+            (primary, payload),
+        )
+        return conn.execute(
+            "SELECT id FROM actresses WHERE name=?",
+            (primary,),
+        ).fetchone()["id"]
+
+    existing_name = row["name"]
+    merged_aliases = _unique_keep_order([
+        *_load_aliases(row),
+        *[x for x in names if x != existing_name],
+    ])
+    payload = json.dumps(merged_aliases, ensure_ascii=False)
+    conn.execute(
+        "UPDATE actresses SET aliases_json=? WHERE id=?",
+        (payload, row["id"]),
+    )
+    return row["id"]
+
+
 # ── DB write ──────────────────────────────────────────────────────────────────
 
 def upsert_video(conn, data: dict) -> int:
@@ -282,8 +373,7 @@ def upsert_video(conn, data: dict) -> int:
     conn.execute("DELETE FROM video_genres    WHERE video_id=?", (vid_id,))
 
     for name in data.get("actresses", []):
-        conn.execute("INSERT OR IGNORE INTO actresses (name) VALUES (?)", (name,))
-        aid = conn.execute("SELECT id FROM actresses WHERE name=?", (name,)).fetchone()["id"]
+        aid = _upsert_actress(conn, name)
         conn.execute("INSERT OR IGNORE INTO video_actresses VALUES (?,?)", (vid_id, aid))
 
     for name in data.get("genres", []):

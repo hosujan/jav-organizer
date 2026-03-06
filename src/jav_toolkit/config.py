@@ -43,8 +43,9 @@ CREATE TABLE IF NOT EXISTS videos (
 );
 
 CREATE TABLE IF NOT EXISTS actresses (
-    id   INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT UNIQUE NOT NULL
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    name         TEXT UNIQUE NOT NULL,
+    aliases_json TEXT NOT NULL DEFAULT '[]'
 );
 
 CREATE TABLE IF NOT EXISTS video_actresses (
@@ -88,6 +89,13 @@ def open_db(db_path: str | Path) -> sqlite3.Connection:
     cols = {row["name"] for row in conn.execute("PRAGMA table_info(videos)").fetchall()}
     if "local_video_path" not in cols:
         conn.execute("ALTER TABLE videos ADD COLUMN local_video_path TEXT")
+    actress_cols = {
+        row["name"] for row in conn.execute("PRAGMA table_info(actresses)").fetchall()
+    }
+    if "aliases_json" not in actress_cols:
+        conn.execute(
+            "ALTER TABLE actresses ADD COLUMN aliases_json TEXT NOT NULL DEFAULT '[]'"
+        )
     conn.commit()
     return conn
 
