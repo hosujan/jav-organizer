@@ -548,13 +548,25 @@ VIEW_HTML = _layout(
       return "/watch/" + encodeURIComponent(v.jav_id);
     }
 
-    function scoreVideo(v) {
-      let score = 0;
-      if (v.has_local_video) score += 4;
-      if (v.has_preview_local) score += 3;
-      if (v.has_poster_local) score += 2;
-      if (v.release_date) score += 1;
-      return score;
+    function safeNumber(value, fallback = 0) {
+      const n = Number(value);
+      return Number.isFinite(n) ? n : fallback;
+    }
+
+    function formatDuration(sec) {
+      const total = Math.max(0, Math.floor(safeNumber(sec, 0)));
+      const h = Math.floor(total / 3600);
+      const m = Math.floor((total % 3600) / 60);
+      const s = total % 60;
+      if (h > 0) {
+        return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+      }
+      return `${m}:${String(s).padStart(2, "0")}`;
+    }
+
+    function valueTime(value) {
+      const t = Date.parse(value || "");
+      return Number.isFinite(t) ? t : 0;
     }
 
     function byRecent(a, b) {
@@ -564,25 +576,41 @@ VIEW_HTML = _layout(
     function pickFeatured(videos) {
       if (!videos.length) return null;
       return [...videos].sort((a, b) => {
-        const scoreDiff = scoreVideo(b) - scoreVideo(a);
+        const scoreDiff = safeNumber(b.recommendation_score) - safeNumber(a.recommendation_score);
         if (scoreDiff) return scoreDiff;
         return byRecent(a, b);
       })[0];
     }
 
     function cardMarkup(v) {
+      const progress = Math.max(0, Math.min(100, safeNumber(v.progress_percent, 0)));
+      const isResume = progress >= 3 && progress < 96;
+      const isCompleted = progress >= 96;
+      const statusLabel = isCompleted
+        ? "Completed"
+        : (isResume ? ("Resume " + Math.round(progress) + "%") : "New");
+      const statusStyle = isCompleted
+        ? "background:rgba(148, 163, 184, 0.18); border-color:rgba(148, 163, 184, 0.5); color:#e2e8f0;"
+        : (isResume
+          ? "background:rgba(249, 115, 22, 0.16); border-color:rgba(249, 115, 22, 0.56); color:#ffd7b0;"
+          : "background:rgba(16, 185, 129, 0.14); border-color:rgba(16, 185, 129, 0.55); color:#aef5d4;");
+      const timeHint = isResume ? formatDuration(v.progress_sec || 0) : "";
       return `
         <div class="card-thumb">
           <img src="${v.poster_url}" alt="${escapeHtml(v.jav_id)}" loading="lazy" />
           <video muted loop playsinline preload="none" src="${v.preview_url}"></video>
           <div style="position:absolute; inset:auto 0 0; padding:7px 8px; background:linear-gradient(180deg, transparent, rgba(0,0,0,.8)); display:flex; justify-content:space-between; gap:8px;">
             <span class="pill" style="background:rgba(5, 14, 22, 0.8); border-color:#45698b;">${escapeHtml(v.jav_id)}</span>
-            ${v.has_local_video ? '<span class="pill" style="background:rgba(16, 185, 129, 0.12); border-color:rgba(16, 185, 129, 0.55); color:#aef5d4;">Playable</span>' : '<span class="pill" style="background:rgba(217, 119, 6, 0.12); border-color:rgba(217, 119, 6, 0.5); color:#ffd8a8;">Metadata</span>'}
+            <span class="pill" style="${statusStyle}">${statusLabel}</span>
           </div>
         </div>
         <div class="card-meta">
           <div class="card-title">${escapeHtml(v.title || "Untitled")}</div>
           <div class="card-sub">${escapeHtml(v.release_date || "-")} ${escapeHtml(v.publisher || "")}</div>
+          ${isResume ? `<div class="hint" style="font-size:12px; margin-top:1px;">Continue from ${timeHint}</div>` : ""}
+          <div style="margin-top:4px; height:4px; width:100%; border-radius:999px; background:rgba(191, 219, 254, 0.18); overflow:hidden;">
+            <div style="height:100%; width:${progress}%; background:linear-gradient(90deg, #22d3ee, #0ea5a4);"></div>
+          </div>
         </div>
       `;
     }
@@ -624,7 +652,11 @@ VIEW_HTML = _layout(
       heroPosterEl.alt = video.jav_id;
       heroJavBadgeEl.textContent = video.jav_id;
       heroTitleEl.textContent = video.title ? video.title : video.jav_id;
-      const metaBits = [video.jav_id, video.release_date || "Unknown date", video.publisher || "Unknown publisher"];
+      const progress = safeNumber(video.progress_percent, 0);
+      const watchHint = progress >= 3 && progress < 96
+        ? ("Resume at " + formatDuration(video.progress_sec || 0))
+        : (progress >= 96 ? "Watched" : "Start watching");
+      const metaBits = [video.jav_id, video.release_date || "Unknown date", video.publisher || "Unknown publisher", watchHint];
       heroMetaEl.textContent = metaBits.join(" / ");
       heroInfoEl.href = toDetail(video);
       heroPlayEl.href = toWatch(video);
@@ -683,10 +715,61 @@ VIEW_HTML = _layout(
       if (!videos.length) return;
 
       const fresh = [...videos].filter((v) => !!v.release_date).sort(byRecent).slice(0, 14);
-      const playable = [...videos].filter((v) => v.has_local_video).sort(byRecent).slice(0, 14);
+      const continueWatching = [...videos]
+        .filter((v) => {
+          const p = safeNumber(v.progress_percent, 0);
+          return p >= 3 && p < 96;
+        })
+        .sort((a, b) => valueTime(b.progress_updated_at) - valueTime(a.progress_updated_at))
+        .slice(0, 14);
+      const topPicks = [...videos]
+        .sort((a, b) => safeNumber(b.recommendation_score, 0) - safeNumber(a.recommendation_score, 0))
+        .slice(0, 14);
       const withPreview = [...videos].filter((v) => v.has_preview_local).sort(byRecent).slice(0, 14);
+      const watchedCore = [...videos]
+        .filter((v) => safeNumber(v.progress_percent, 0) >= 45)
+        .sort((a, b) => valueTime(b.progress_updated_at) - valueTime(a.progress_updated_at))
+        .slice(0, 8);
 
-      if (playable.length) railsEl.appendChild(buildRail("Ready to Watch", playable));
+      const actressWeight = new Map();
+      const genreWeight = new Map();
+      const pubWeight = new Map();
+      for (const item of watchedCore) {
+        for (const name of (item.actresses || [])) {
+          actressWeight.set(name, (actressWeight.get(name) || 0) + 1.4);
+        }
+        for (const name of (item.genres || [])) {
+          genreWeight.set(name, (genreWeight.get(name) || 0) + 0.9);
+        }
+        if (item.publisher) {
+          pubWeight.set(item.publisher, (pubWeight.get(item.publisher) || 0) + 0.8);
+        }
+      }
+      const watchedIds = new Set(watchedCore.map((v) => v.jav_id));
+      const becauseWatched = [...videos]
+        .filter((v) => !watchedIds.has(v.jav_id))
+        .map((v) => {
+          let affinity = 0;
+          for (const name of (v.actresses || [])) {
+            affinity += actressWeight.get(name) || 0;
+          }
+          for (const name of (v.genres || [])) {
+            affinity += genreWeight.get(name) || 0;
+          }
+          if (v.publisher) {
+            affinity += pubWeight.get(v.publisher) || 0;
+          }
+          affinity += safeNumber(v.recommendation_score, 0) * 0.18;
+          return {v, affinity};
+        })
+        .filter((entry) => entry.affinity > 0)
+        .sort((a, b) => b.affinity - a.affinity)
+        .slice(0, 14)
+        .map((entry) => entry.v);
+
+      if (continueWatching.length) railsEl.appendChild(buildRail("Continue Watching", continueWatching));
+      if (topPicks.length) railsEl.appendChild(buildRail("Top Picks For You", topPicks));
+      if (becauseWatched.length) railsEl.appendChild(buildRail("Because You Watched", becauseWatched));
       if (fresh.length) railsEl.appendChild(buildRail("New Releases", fresh));
       if (withPreview.length) railsEl.appendChild(buildRail("Preview Available", withPreview));
     }
@@ -856,6 +939,8 @@ VIDEO_HTML = _layout(
         ["Director", data.director, false],
         ["Rating", data.rating != null ? String(data.rating) : null, false],
         ["Local Video", data.has_local_video ? "Yes" : "No", false],
+        ["Watch Progress", Math.round(Number(data.progress_percent || 0)) + "%", false],
+        ["Watch State", data.watch_state || "started", false],
         ["Fetched At", data.fetched_at, false],
         ["Source", data.page_url ? `<a href="${escapeHtml(data.page_url)}" target="_blank" rel="noopener noreferrer">Open source page</a>` : "-", true],
       ];
@@ -963,6 +1048,11 @@ VIDEO_HTML = _layout(
 
         const metaBits = [data.release_date || null, data.publisher || null].filter(Boolean);
         document.getElementById("detailMeta").textContent = metaBits.join(" / ");
+        const statusEl = document.getElementById("detailStatus");
+        const progress = Number(data.progress_percent || 0);
+        if (statusEl && progress >= 3 && progress < 96) {
+          statusEl.textContent = "Resume available at " + Math.floor(Number(data.progress_sec || 0)) + " sec (" + Math.round(progress) + "%).";
+        }
         document.getElementById("detailPoster").src = data.poster_url || "/api/poster?id=__JAV_ID__";
         document.title = "Video " + title;
       } catch (error) {
@@ -996,6 +1086,11 @@ WATCH_HTML = _layout(
         <p class="page-kicker" style="margin:0;">Now Playing</p>
         <h1 id="watchTitle" class="page-title" style="margin-top:7px;">__JAV_ID__</h1>
         <p id="watchMeta" style="margin:9px 0 0; color:#bdd8f2; font-size:14px;"></p>
+        <div id="resumeBox" style="display:none; margin-top:10px; gap:8px; flex-wrap:wrap;">
+          <button id="resumeBtn" type="button" class="primary" style="padding:8px 12px;">Resume</button>
+          <button id="restartBtn" type="button" style="padding:8px 12px;">Start Over</button>
+          <span id="resumeText" class="hint"></span>
+        </div>
 
         <div style="margin-top:14px; border:1px solid #304e6b; border-radius:14px; overflow:hidden; background:#05070c; box-shadow:0 16px 34px rgba(0,0,0,.38);">
           <video id="watchPlayer" controls autoplay playsinline src="/api/local-video?id=__JAV_ID__" style="width:100%; max-height:74vh; display:block; background:#000;"></video>
@@ -1028,6 +1123,88 @@ WATCH_HTML = _layout(
       return res.json();
     }
 
+    async function post(url, body, keepalive = false) {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(body || {}),
+        keepalive,
+      });
+      if (!res.ok) throw new Error(res.statusText);
+      return res.json().catch(() => ({}));
+    }
+
+    function safeNumber(value, fallback = 0) {
+      const n = Number(value);
+      return Number.isFinite(n) ? n : fallback;
+    }
+
+    function formatDuration(sec) {
+      const total = Math.max(0, Math.floor(safeNumber(sec, 0)));
+      const h = Math.floor(total / 3600);
+      const m = Math.floor((total % 3600) / 60);
+      const s = total % 60;
+      if (h > 0) {
+        return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+      }
+      return `${m}:${String(s).padStart(2, "0")}`;
+    }
+
+    const player = document.getElementById("watchPlayer");
+    const resumeBox = document.getElementById("resumeBox");
+    const resumeBtn = document.getElementById("resumeBtn");
+    const restartBtn = document.getElementById("restartBtn");
+    const resumeText = document.getElementById("resumeText");
+
+    let resumeAt = 0;
+    let lastSavedSec = -1;
+
+    async function saveProgress(eventName = "progress", keepalive = false) {
+      if (!player) return;
+      const position = safeNumber(player.currentTime, 0);
+      const duration = safeNumber(player.duration, 0);
+      const nowSec = Math.floor(position);
+      if (!keepalive && eventName === "progress" && nowSec === lastSavedSec) return;
+      if (!keepalive && eventName === "progress" && nowSec % 5 !== 0) return;
+      lastSavedSec = nowSec;
+
+      try {
+        await post(
+          "/api/watch-progress",
+          {
+            id: "__JAV_ID__",
+            position_sec: position,
+            duration_sec: duration > 0 ? duration : null,
+            event: eventName,
+          },
+          keepalive,
+        );
+      } catch (error) {
+      }
+    }
+
+    function showResume(positionSec, percent) {
+      if (!resumeBox || !resumeBtn || !restartBtn || !resumeText || !player) return;
+      if (!(positionSec >= 30 && percent < 96)) {
+        resumeBox.style.display = "none";
+        return;
+      }
+      resumeAt = positionSec;
+      resumeText.textContent = `Resume from ${formatDuration(positionSec)} (${Math.round(percent)}%)`;
+      resumeBox.style.display = "flex";
+      resumeBtn.textContent = `Resume ${formatDuration(positionSec)}`;
+      resumeBtn.onclick = () => {
+        player.currentTime = Math.max(0, resumeAt - 2);
+        resumeBox.style.display = "none";
+        player.play().catch(() => {});
+      };
+      restartBtn.onclick = async () => {
+        player.currentTime = 0;
+        resumeBox.style.display = "none";
+        await saveProgress("reset");
+      };
+    }
+
     async function initMeta() {
       try {
         const data = await get("/api/video?id=__JAV_ID__");
@@ -1038,6 +1215,7 @@ WATCH_HTML = _layout(
 
         const bits = [data.release_date || null, data.publisher || null, data.duration_min ? data.duration_min + " min" : null].filter(Boolean);
         document.getElementById("watchMeta").textContent = bits.join(" / ");
+        showResume(safeNumber(data.progress_sec, 0), safeNumber(data.progress_percent, 0));
         document.title = "Watch " + title;
       } catch (error) {
         const meta = document.getElementById("watchMeta");
@@ -1047,10 +1225,21 @@ WATCH_HTML = _layout(
       }
     }
 
-    const player = document.getElementById("watchPlayer");
     if (player) {
+      player.addEventListener("timeupdate", () => {
+        saveProgress("progress").catch(() => {});
+      });
+      player.addEventListener("pause", () => {
+        saveProgress("progress").catch(() => {});
+      });
+      player.addEventListener("ended", () => {
+        saveProgress("ended").catch(() => {});
+      });
       player.play().catch(() => {});
     }
+    window.addEventListener("beforeunload", () => {
+      saveProgress("progress", true).catch(() => {});
+    });
 
     initMeta();
   </script>

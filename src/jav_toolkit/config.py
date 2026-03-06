@@ -63,6 +63,16 @@ CREATE TABLE IF NOT EXISTS video_genres (
     genre_id INTEGER REFERENCES genres(id)  ON DELETE CASCADE,
     PRIMARY KEY (video_id, genre_id)
 );
+
+CREATE TABLE IF NOT EXISTS watch_progress (
+    jav_id        TEXT PRIMARY KEY,
+    position_sec  REAL NOT NULL DEFAULT 0,
+    duration_sec  REAL,
+    percent       REAL NOT NULL DEFAULT 0,
+    state         TEXT NOT NULL DEFAULT 'started',
+    updated_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (jav_id) REFERENCES videos(jav_id) ON DELETE CASCADE
+);
 """
 
 
