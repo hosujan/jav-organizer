@@ -58,6 +58,9 @@ def scan_video_files(base_dir: Path) -> list[dict]:
 
 
 def choose_directory_dialog() -> str | None:
+    # macOS AppKit requires UI windows on the main thread.
+    if threading.current_thread() is not threading.main_thread():
+        return None
     try:
         import tkinter as tk
         from tkinter import filedialog
@@ -397,7 +400,13 @@ class AppHandler(BaseHTTPRequestHandler):
             if not chosen:
                 chosen = (body.get("path") or "").strip()
             if not chosen:
-                self._json({"ok": False, "error": "no directory selected"}, 400)
+                self._json(
+                    {
+                        "ok": False,
+                        "error": "native folder picker unavailable here; please enter path manually",
+                    },
+                    400,
+                )
                 return
             folder = Path(chosen).expanduser().resolve()
             if not folder.exists() or not folder.is_dir():
@@ -773,4 +782,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
