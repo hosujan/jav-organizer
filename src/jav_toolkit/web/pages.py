@@ -29,6 +29,8 @@ def _layout(title: str, active: str, content: str, script: str = "") -> str:
       --brand: #0e9f9a;
       --brand-2: #11786d;
       --accent: #f97316;
+      --control-bg: #0b1624;
+      --control-bg-strong: #12243a;
       --warn: #d97706;
       --good: #10b981;
     }}
@@ -149,17 +151,22 @@ def _layout(title: str, active: str, content: str, script: str = "") -> str:
       font: inherit;
       color: var(--ink);
       border-radius: 10px;
-      border: 1px solid var(--line);
-      background: #101a27;
+      border: 1px solid #4a6480;
+      background: var(--control-bg);
       padding: 10px 12px;
     }}
     button {{ cursor: pointer; transition: all .2s ease; }}
-    button:hover {{ border-color: var(--line-soft); }}
+    button:hover {{ border-color: #6a89ab; }}
+    button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible {{
+      outline: 2px solid #e8f3ff;
+      outline-offset: 2px;
+    }}
     button.primary {{
       color: #fff;
-      border-color: rgba(14, 159, 154, 0.8);
+      border-color: rgba(14, 159, 154, 0.95);
       background: linear-gradient(130deg, var(--brand), var(--brand-2));
       font-weight: 700;
+      box-shadow: 0 10px 22px rgba(14, 159, 154, 0.22);
     }}
     button.primary:hover {{
       filter: brightness(1.03);
@@ -232,6 +239,35 @@ def _layout(title: str, active: str, content: str, script: str = "") -> str:
       font-size: 12px;
       min-height: calc(1.3em * 2);
     }}
+    .action-link {{
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid #4e6e90;
+      background: var(--control-bg-strong);
+      color: #deeeff;
+      border-radius: 10px;
+      padding: 10px 14px;
+      font-weight: 700;
+      transition: border-color .2s ease, background .2s ease;
+    }}
+    .action-link:hover {{
+      border-color: #79a0c7;
+      background: #17344f;
+    }}
+    .panel-muted {{
+      padding: 12px;
+      background: rgba(11, 25, 41, 0.62);
+      border-color: #3a5a79;
+      box-shadow: none;
+    }}
+    .form-grid {{
+      display: grid;
+      grid-template-columns: minmax(240px, 1fr) auto auto auto;
+      gap: 8px;
+      align-items: center;
+    }}
     .fact-grid {{
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -278,7 +314,9 @@ def _layout(title: str, active: str, content: str, script: str = "") -> str:
       .detail-grid {{ grid-template-columns: 1fr !important; }}
       .fact-grid {{ grid-template-columns: 1fr; }}
       #watchGrid {{ grid-template-columns: 1fr !important; }}
+      #watchMain {{ border-right: none !important; border-bottom: 1px solid rgba(58, 95, 127, 0.55); }}
       #screenshotsGrid {{ grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }}
+      .form-grid {{ grid-template-columns: 1fr !important; }}
     }}
 
     @media (max-width: 760px) {{
@@ -323,10 +361,10 @@ ORGANIZE_HTML = _layout(
     """
   <section class="panel">
     <h1 style="margin:0 0 8px; font-size:26px; letter-spacing:.05em; text-transform:uppercase;">Organize</h1>
-    <p class="hint" style="margin:0 0 14px;">Scan your folder, process metadata/media, then verify history entries.</p>
-    <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
-      <button id="chooseBtn" class="primary">Choose Local Directory</button>
+    <p class="hint" style="margin:0 0 14px;">Choose your library path, then run one processing action.</p>
+    <div class="form-grid">
       <input id="manualPath" type="text" placeholder="Fallback: enter local path" style="min-width:320px; flex:1;" />
+      <button id="chooseBtn">Choose Local Directory</button>
       <button id="manualBtn">Use Path</button>
       <button id="processBtn" class="primary">Start Processing</button>
     </div>
@@ -497,8 +535,8 @@ VIEW_HTML = _layout(
         </div>
         <p id="heroMeta" style="margin:12px 0 0; color:#bfdaf4; font-size:14px; line-height:1.5;"></p>
         <div style="margin-top:18px; display:flex; gap:10px; flex-wrap:wrap;">
-          <a id="heroPlay" href="#" style="text-decoration:none; color:#fff; border:1px solid rgba(16, 185, 129, 0.55); background:linear-gradient(125deg, #10b981, #0f766e); border-radius:10px; padding:10px 14px; font-weight:700;">Play Now</a>
-          <a id="heroInfo" href="#" style="text-decoration:none; color:#ffdcb8; border:1px solid rgba(249, 115, 22, 0.52); background:rgba(249, 115, 22, 0.1); border-radius:10px; padding:10px 14px; font-weight:700;">Open Details</a>
+          <a id="heroPlay" href="#" class="action-link" style="color:#fff; border-color:rgba(16, 185, 129, 0.7); background:linear-gradient(125deg, #10b981, #0f766e);">Play Now</a>
+          <a id="heroInfo" href="#" class="action-link" style="color:#ffdcb8; border-color:rgba(249, 115, 22, 0.52); background:rgba(249, 115, 22, 0.1);">Open Details</a>
         </div>
       </div>
     </div>
@@ -1167,8 +1205,8 @@ VIDEO_HTML = _layout(
           </div>
           <div class="detail-actions" style="display:flex; gap:8px; flex-wrap:wrap;">
             <button id="detailPlayBtn" type="button" class="primary" style="padding:10px 14px;">Play Full Video</button>
-            <a id="theaterLink" href="/watch/__JAV_ID__" style="text-decoration:none; color:#ffdcb8; border:1px solid rgba(249, 115, 22, 0.52); background:rgba(249, 115, 22, 0.1); border-radius:10px; padding:10px 14px; font-weight:700;">Open Theater</a>
-            <a href="/view" style="text-decoration:none; color:#d5e7ff; border:1px solid #426486; background:#16293d; border-radius:10px; padding:10px 14px;">Back to Browse</a>
+            <a id="theaterLink" href="/watch/__JAV_ID__" class="action-link" style="color:#ffdcb8; border-color:rgba(249, 115, 22, 0.52); background:rgba(249, 115, 22, 0.1);">Open Theater</a>
+            <a href="/view" class="action-link">Back to Browse</a>
           </div>
         </div>
         <p id="detailMeta" style="margin:10px 0 0; color:#bfd7f2; font-size:14px;"></p>
@@ -1411,8 +1449,8 @@ WATCH_HTML = _layout(
     "view",
     """
   <section class="panel" style="padding:0; overflow:hidden; background:linear-gradient(122deg, rgba(13, 45, 62, 0.98), rgba(21, 34, 54, 0.96)); border-color:#3a5f7f;">
-    <div id="watchGrid" style="display:grid; grid-template-columns:minmax(0, 2fr) minmax(280px, 1fr);">
-      <div style="padding:18px; border-right:1px solid rgba(58, 95, 127, 0.55);">
+    <div id="watchGrid" style="display:grid; grid-template-columns:minmax(0, 2.4fr) minmax(300px, 1fr);">
+      <div id="watchMain" style="padding:18px; border-right:1px solid rgba(58, 95, 127, 0.55);">
         <p class="page-kicker" style="margin:0;">Now Playing</p>
         <h1 id="watchTitle" class="page-title" style="margin-top:7px;">__JAV_ID__</h1>
         <p id="watchMeta" style="margin:9px 0 0; color:#bdd8f2; font-size:14px;"></p>
@@ -1423,26 +1461,22 @@ WATCH_HTML = _layout(
         </div>
 
         <div style="margin-top:14px; border:1px solid #304e6b; border-radius:14px; overflow:hidden; background:#05070c; box-shadow:0 16px 34px rgba(0,0,0,.38);">
-          <video id="watchPlayer" controls autoplay playsinline src="/api/local-video?id=__JAV_ID__" style="width:100%; max-height:74vh; display:block; background:#000;"></video>
+          <video id="watchPlayer" controls autoplay playsinline src="/api/local-video?id=__JAV_ID__" style="width:100%; max-height:78vh; display:block; background:#000;"></video>
         </div>
+        <p class="hint" style="margin:10px 0 0;">Keyboard: left/right seeks, space toggles play/pause.</p>
       </div>
 
       <aside style="padding:18px; display:grid; align-content:start; gap:12px; background:rgba(8, 18, 31, 0.55);">
         <div>
-          <h2 style="margin:0; font-size:18px;">Quick Actions</h2>
-          <p class="hint" style="margin:6px 0 0;">Stay in theater mode or jump back for metadata browsing.</p>
+          <h2 style="margin:0; font-size:18px;">Navigation</h2>
+          <p class="hint" style="margin:6px 0 0;">Playback stays primary. Use these when you need context.</p>
         </div>
         <div class="watch-actions" style="display:grid; gap:8px;">
-          <a href="/video/__JAV_ID__" style="text-decoration:none; border:1px solid #3f6487; background:#17304a; color:#d8ecff; border-radius:10px; padding:10px 12px; font-weight:700;">Open Details</a>
-          <a href="/view" style="text-decoration:none; border:1px solid #3f6487; background:#17304a; color:#d8ecff; border-radius:10px; padding:10px 12px;">Back to Browse</a>
+          <a href="/video/__JAV_ID__" class="action-link">Open Details</a>
+          <a href="/view" class="action-link">Back to Browse</a>
         </div>
 
-        <div class="panel" style="padding:12px; background:rgba(23, 48, 74, 0.45); border-color:#335676; box-shadow:none;">
-          <p class="fact-label" style="margin-top:0;">Playback Tips</p>
-          <p class="hint" style="margin:0; line-height:1.6;">Use left/right arrow keys for seeking and space for play/pause. Streaming uses HTTP range requests from your local media file.</p>
-        </div>
-
-        <div class="panel" style="padding:12px; background:rgba(11, 25, 41, 0.6); border-color:#335676; box-shadow:none;">
+        <div class="panel panel-muted">
           <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
             <p class="fact-label" style="margin:0;">Up Next</p>
             <a href="/view" class="hint" style="font-size:12px;">See all</a>
@@ -1569,15 +1603,15 @@ WATCH_HTML = _layout(
         row.style.display = "grid";
         row.style.gridTemplateColumns = "92px minmax(0, 1fr)";
         row.style.gap = "8px";
-        row.style.border = "1px solid #35546f";
-        row.style.background = "rgba(19, 37, 56, 0.72)";
-        row.style.borderRadius = "10px";
+        row.style.border = "1px solid #4d6c8d";
+        row.style.background = "rgba(16, 33, 50, 0.9)";
+        row.style.borderRadius = "12px";
         row.style.overflow = "hidden";
         row.innerHTML = `
           <img src="${item.poster_url}" alt="${escapeHtml(item.jav_id)}" loading="lazy" style="width:100%; height:100%; min-height:56px; object-fit:cover; display:block;" />
           <div style="padding:7px 8px;">
             <div style="font-weight:700; font-size:12px; color:#e8f4ff; line-height:1.3;">${escapeHtml(item.jav_id)}</div>
-            <div class="hint" style="font-size:11px; margin-top:2px; line-height:1.35;">${escapeHtml(title)}</div>
+            <div class="hint" style="font-size:11px; margin-top:2px; line-height:1.35; color:#c2d8ee;">${escapeHtml(title)}</div>
             <div style="margin-top:6px; height:3px; width:100%; border-radius:999px; overflow:hidden; background:rgba(191, 219, 254, 0.2);">
               <div style="height:100%; width:${p}%; background:linear-gradient(90deg, #22d3ee, #14b8a6);"></div>
             </div>
