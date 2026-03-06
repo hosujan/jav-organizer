@@ -12,6 +12,7 @@ Local-first JAV organizer with CLI and web UI:
 - [Web UI Guide](docs/web-ui.md)
 - [Architecture and Data](docs/architecture.md)
 - [Troubleshooting](docs/troubleshooting.md)
+- [Development Guide](docs/development.md)
 
 ## Quick Start
 ```bash
