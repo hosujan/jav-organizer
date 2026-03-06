@@ -5,6 +5,7 @@ def _layout(title: str, active: str, content: str, script: str = "") -> str:
     nav_links = [
         ("organize", "/organize", "Organize"),
         ("view", "/view", "Browse"),
+        ("titles", "/all-titles", "All Titles"),
     ]
     nav = "".join(
         f'<a class="nav-link {"active" if key == active else ""}" href="{href}">{label}</a>'
@@ -35,7 +36,7 @@ def _layout(title: str, active: str, content: str, script: str = "") -> str:
       --good: #10b981;
     }}
     * {{ box-sizing: border-box; }}
-    html, body {{ margin: 0; padding: 0; }}
+    html, body {{ margin: 0; padding: 0; overflow-x: hidden; }}
     body {{
       color: var(--ink);
       font-family: "Space Grotesk", "Avenir Next", "Trebuchet MS", sans-serif;
@@ -124,6 +125,33 @@ def _layout(title: str, active: str, content: str, script: str = "") -> str:
       border-radius: 16px;
       box-shadow: 0 16px 36px rgba(3, 8, 15, 0.45);
       padding: 16px;
+    }}
+    .section-head {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 10px;
+    }}
+    .stat-pill {{
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      border: 1px solid #4c6e91;
+      background: rgba(10, 21, 35, 0.75);
+      color: #d5e9ff;
+      font-size: 12px;
+      padding: 4px 10px;
+    }}
+    .empty-state {{
+      border: 1px dashed #4d6e90;
+      border-radius: 12px;
+      padding: 18px 14px;
+      color: #c2d6eb;
+      text-align: center;
+      background: rgba(9, 20, 32, 0.55);
+      font-size: 13px;
     }}
     .page-head {{
       display: flex;
@@ -325,13 +353,19 @@ def _layout(title: str, active: str, content: str, script: str = "") -> str:
       .brand-sub {{ display: none; }}
       .page-title {{ font-size: 23px; }}
       #searchInput {{ min-width: 0 !important; width: 100%; }}
-      #grid {{ grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)) !important; gap: 10px !important; }}
-      #rails [data-rail-track] {{ grid-auto-columns: minmax(210px, 84vw) !important; }}
+      #grid {{ grid-template-columns: repeat(auto-fill, minmax(160px, 220px)) !important; justify-content: start !important; gap: 10px !important; }}
+      #rails [data-rail-track] {{ grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)) !important; }}
       #heroTitle {{ font-size: 24px !important; }}
       #watchTitle {{ font-size: 24px !important; }}
       #screenshotsGrid {{ grid-template-columns: 1fr !important; }}
       .watch-actions a {{ width: 100%; text-align: center; }}
       .detail-actions a, .detail-actions button {{ width: 100%; text-align: center; }}
+    }}
+    @media (prefers-reduced-motion: reduce) {{
+      *, *::before, *::after {{
+        animation: none !important;
+        transition: none !important;
+      }}
     }}
   </style>
 </head>
@@ -384,8 +418,8 @@ ORGANIZE_HTML = _layout(
       <strong>Catalog History</strong>
       <span class="hint" id="catalogCount"></span>
     </div>
-    <div style="overflow:auto; margin-top:10px;">
-      <table style="width:100%; border-collapse:collapse; min-width:700px; font-size:13px;">
+    <div style="margin-top:10px;">
+      <table style="width:100%; border-collapse:collapse; font-size:13px; table-layout:fixed;">
         <thead>
           <tr style="text-align:left; border-bottom:1px solid var(--line);">
             <th style="padding:8px 6px;">JAV ID</th>
@@ -447,12 +481,12 @@ ORGANIZE_HTML = _layout(
           v.has_local_video ? "video" : null,
         ].filter(Boolean).join(", ") || "none";
         tr.innerHTML = `
-          <td style="padding:8px 6px; font-weight:700;">${v.jav_id}</td>
-          <td style="padding:8px 6px;">${v.title || "Untitled"}</td>
-          <td style="padding:8px 6px;">${v.release_date || "-"}</td>
-          <td style="padding:8px 6px;">${v.publisher || "-"}</td>
-          <td style="padding:8px 6px; color:var(--muted);">${assets}</td>
-          <td style="padding:8px 6px;"><a href="/video/${encodeURIComponent(v.jav_id)}">Open</a></td>
+          <td style="padding:8px 6px; font-weight:700; overflow-wrap:anywhere;">${v.jav_id}</td>
+          <td style="padding:8px 6px; overflow-wrap:anywhere;">${v.title || "Untitled"}</td>
+          <td style="padding:8px 6px; overflow-wrap:anywhere;">${v.release_date || "-"}</td>
+          <td style="padding:8px 6px; overflow-wrap:anywhere;">${v.publisher || "-"}</td>
+          <td style="padding:8px 6px; color:var(--muted); overflow-wrap:anywhere;">${assets}</td>
+          <td style="padding:8px 6px; overflow-wrap:anywhere;"><a href="/video/${encodeURIComponent(v.jav_id)}">Open</a></td>
         `;
         historyBody.appendChild(tr);
       }
@@ -543,7 +577,7 @@ VIEW_HTML = _layout(
   </section>
 
   <section class="panel" style="margin-top:14px;">
-    <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+    <div class="section-head">
       <strong>Smart Discovery</strong>
       <button id="clearFiltersBtn" type="button" style="padding:7px 10px;">Clear Filters</button>
     </div>
@@ -574,19 +608,19 @@ VIEW_HTML = _layout(
   <section id="rails" style="margin-top:14px;"></section>
 
   <section class="panel" style="margin-top:14px;">
-    <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:10px;">
-      <strong>All Titles</strong>
-      <span class="hint" id="resultCount"></span>
+    <div class="section-head">
+      <div>
+        <strong>All Titles</strong>
+        <p class="hint" style="margin:6px 0 0;">Use the dedicated catalog page for advanced filtering and sorting.</p>
+      </div>
+      <a href="/all-titles" class="action-link">Go to All Titles</a>
     </div>
-    <div id="grid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(240px, 1fr)); gap:14px;"></div>
   </section>
 """,
     """
   <script>
-    const gridEl = document.getElementById("grid");
     const railsEl = document.getElementById("rails");
     const searchInput = document.getElementById("searchInput");
-    const resultCountEl = document.getElementById("resultCount");
     const heroPosterEl = document.getElementById("heroPoster");
     const heroJavBadgeEl = document.getElementById("heroJavBadge");
     const heroTitleEl = document.getElementById("heroTitle");
@@ -604,8 +638,8 @@ VIEW_HTML = _layout(
     const clearFiltersBtn = document.getElementById("clearFiltersBtn");
 
     let allVideos = [];
-    let activeRailScroller = null;
     let filteredVideos = [];
+    let filterTimer = null;
     const filters = {
       year: "",
       genre: "",
@@ -829,6 +863,7 @@ VIEW_HTML = _layout(
 
     function attachCardEffects(card) {
       const preview = card.querySelector("video");
+      if (window.matchMedia("(hover: none)").matches) return;
       card.addEventListener("mouseenter", () => {
         preview.style.opacity = "1";
         preview.play().catch(() => {});
@@ -876,20 +911,6 @@ VIEW_HTML = _layout(
       heroInfoEl.style.display = "inline-flex";
     }
 
-    function renderGrid(videos) {
-      gridEl.innerHTML = "";
-      resultCountEl.textContent = videos.length + " title(s)";
-      for (const video of videos) {
-        gridEl.appendChild(makeCard(video));
-      }
-    }
-
-    function scrollRail(scroller, direction) {
-      if (!scroller) return;
-      const amount = Math.max(260, Math.floor(scroller.clientWidth * 0.82));
-      scroller.scrollBy({left: amount * direction, behavior: "smooth"});
-    }
-
     function buildRail(name, items) {
       const section = document.createElement("section");
       section.className = "panel";
@@ -897,34 +918,22 @@ VIEW_HTML = _layout(
       section.innerHTML = `
         <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px;">
           <strong>${escapeHtml(name)}</strong>
-          <div style="display:flex; gap:6px;">
-            <button type="button" data-dir="-1" style="padding:6px 10px; min-width:42px;">&#8592;</button>
-            <button type="button" data-dir="1" style="padding:6px 10px; min-width:42px;">&#8594;</button>
-          </div>
         </div>
-        <div data-rail-track style="display:grid; grid-auto-flow:column; grid-auto-columns:minmax(230px, 1fr); gap:12px; overflow-x:auto; padding-bottom:6px; outline:none;"></div>
+        <div data-rail-track style="display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:12px;"></div>
       `;
       const scroller = section.querySelector("[data-rail-track]");
       for (const video of items) {
         scroller.appendChild(makeCard(video));
       }
-      scroller.addEventListener("mouseenter", () => { activeRailScroller = scroller; });
-      scroller.addEventListener("focus", () => { activeRailScroller = scroller; });
-      const buttons = section.querySelectorAll("button[data-dir]");
-      for (const button of buttons) {
-        button.addEventListener("click", () => {
-          activeRailScroller = scroller;
-          scrollRail(scroller, Number(button.dataset.dir || "0"));
-        });
-      }
-      if (!activeRailScroller) activeRailScroller = scroller;
       return section;
     }
 
     function buildRails(videos) {
       railsEl.innerHTML = "";
-      activeRailScroller = null;
-      if (!videos.length) return;
+      if (!videos.length) {
+        railsEl.innerHTML = '<section class="panel"><div class="empty-state">No videos match this discovery filter set.</div></section>';
+        return;
+      }
 
       const fresh = [...videos].filter((v) => !!v.release_date).sort(byRecent).slice(0, 14);
       const continueWatching = [...videos]
@@ -937,7 +946,6 @@ VIEW_HTML = _layout(
       const topPicks = [...videos]
         .sort((a, b) => safeNumber(b.recommendation_score, 0) - safeNumber(a.recommendation_score, 0))
         .slice(0, 14);
-      const withPreview = [...videos].filter((v) => v.has_preview_local).sort(byRecent).slice(0, 14);
       const watchedCore = [...videos]
         .filter((v) => safeNumber(v.progress_percent, 0) >= 45)
         .sort((a, b) => valueTime(b.progress_updated_at) - valueTime(a.progress_updated_at))
@@ -983,7 +991,9 @@ VIEW_HTML = _layout(
       if (topPicks.length) railsEl.appendChild(buildRail("Top Picks For You", topPicks));
       if (becauseWatched.length) railsEl.appendChild(buildRail("Because You Watched", becauseWatched));
       if (fresh.length) railsEl.appendChild(buildRail("New Releases", fresh));
-      if (withPreview.length) railsEl.appendChild(buildRail("Preview Available", withPreview));
+      if (!railsEl.children.length) {
+        railsEl.innerHTML = '<section class="panel"><div class="empty-state">No recommendation rails available yet.</div></section>';
+      }
     }
 
     function renderActiveFilters() {
@@ -1059,8 +1069,6 @@ VIEW_HTML = _layout(
             filteredVideos = allVideos.filter((v) => safeNumber(v.progress_percent, 0) >= 3 && safeNumber(v.progress_percent, 0) < 96);
             renderHero(pickFeatured(filteredVideos));
             buildRails(filteredVideos);
-            renderGrid(filteredVideos);
-            resultCountEl.textContent = filteredVideos.length + " title(s) • Resume";
             return;
           }
           filters[chipInfo.key] = chipInfo.value;
@@ -1097,14 +1105,9 @@ VIEW_HTML = _layout(
 
       renderHero(pickFeatured(filteredVideos));
       buildRails(filteredVideos);
-      renderGrid(filteredVideos);
       updateFacetOptions(query || usedFacets ? filteredVideos : allVideos);
       renderActiveFilters();
       renderQuickChips(filteredVideos.length ? filteredVideos : allVideos);
-
-      if (query || usedFacets) {
-        resultCountEl.textContent = filteredVideos.length + " title(s) • refined";
-      }
     }
 
     async function init() {
@@ -1112,12 +1115,14 @@ VIEW_HTML = _layout(
       updateFacetOptions(allVideos);
       renderHero(pickFeatured(allVideos));
       buildRails(allVideos);
-      renderGrid(allVideos);
       renderActiveFilters();
       renderQuickChips(allVideos);
     }
 
-    searchInput.addEventListener("input", applyFilter);
+    searchInput.addEventListener("input", () => {
+      if (filterTimer) window.clearTimeout(filterTimer);
+      filterTimer = window.setTimeout(applyFilter, 140);
+    });
     if (filterYearEl) {
       filterYearEl.addEventListener("change", () => {
         filters.year = filterYearEl.value;
@@ -1167,13 +1172,413 @@ VIEW_HTML = _layout(
         applyFilter();
       });
     }
-    document.addEventListener("keydown", (event) => {
-      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-      const tag = event.target && event.target.tagName ? event.target.tagName.toLowerCase() : "";
-      if (tag === "input" || tag === "textarea") return;
-      if (!activeRailScroller) return;
-      event.preventDefault();
-      scrollRail(activeRailScroller, event.key === "ArrowLeft" ? -1 : 1);
+    init().catch((error) => {
+      railsEl.innerHTML = '<section class="panel"><p class="hint">Failed to load catalog: ' + error.message + '</p></section>';
+    });
+  </script>
+""",
+)
+
+
+ALL_TITLES_HTML = _layout(
+    "All Titles",
+    "titles",
+    """
+  <section class="panel">
+    <div class="page-head" style="align-items:flex-start;">
+      <div>
+        <p class="page-kicker">Catalog</p>
+        <h1 class="page-title" style="margin-top:6px;">All Titles</h1>
+      </div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <input id="searchInput" type="search" placeholder="Search by JAV ID, title, actress, genre" style="min-width:300px; max-width:520px; width:100%; background:#12263b; border-color:#426486;" />
+        <a href="/view" class="action-link">Back to Browse</a>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel" style="margin-top:14px;">
+    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:8px;">
+      <select id="filterYear"><option value="">Year</option></select>
+      <select id="filterGenre"><option value="">Genre</option></select>
+      <select id="filterActress"><option value="">Actress</option></select>
+      <select id="filterStudio"><option value="">Studio</option></select>
+      <select id="filterDuration">
+        <option value="">Duration</option>
+        <option value="short">Under 90 min</option>
+        <option value="mid">90-150 min</option>
+        <option value="long">150+ min</option>
+        <option value="unknown">Unknown</option>
+      </select>
+      <select id="filterRating">
+        <option value="">Rating</option>
+        <option value="high">4.0+</option>
+        <option value="mid">3.0-3.9</option>
+        <option value="low">Below 3.0</option>
+        <option value="unrated">Unrated</option>
+      </select>
+    </div>
+    <div style="display:flex; gap:8px; margin-top:10px; flex-wrap:wrap;">
+      <select id="sortBy" style="min-width:160px;">
+        <option value="recommended">Sort: Recommended</option>
+        <option value="newest">Sort: Newest</option>
+        <option value="oldest">Sort: Oldest</option>
+        <option value="rating">Sort: Rating</option>
+        <option value="progress">Sort: Progress</option>
+        <option value="title">Sort: Title</option>
+      </select>
+      <button id="sortDirBtn" type="button">Descending</button>
+      <button id="clearFiltersBtn" type="button">Clear Filters</button>
+    </div>
+    <div id="activeFilters" style="display:flex; flex-wrap:wrap; gap:6px; margin-top:10px;"></div>
+  </section>
+
+  <section class="panel" style="margin-top:14px;">
+    <div class="section-head">
+      <strong>All Titles</strong>
+      <span class="stat-pill" id="resultCount"></span>
+    </div>
+    <div id="grid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(240px, 280px)); justify-content:start; gap:14px;"></div>
+  </section>
+""",
+    """
+  <script>
+    const gridEl = document.getElementById("grid");
+    const resultCountEl = document.getElementById("resultCount");
+    const searchInput = document.getElementById("searchInput");
+    const filterYearEl = document.getElementById("filterYear");
+    const filterGenreEl = document.getElementById("filterGenre");
+    const filterActressEl = document.getElementById("filterActress");
+    const filterStudioEl = document.getElementById("filterStudio");
+    const filterDurationEl = document.getElementById("filterDuration");
+    const filterRatingEl = document.getElementById("filterRating");
+    const activeFiltersEl = document.getElementById("activeFilters");
+    const clearFiltersBtn = document.getElementById("clearFiltersBtn");
+    const sortByEl = document.getElementById("sortBy");
+    const sortDirBtn = document.getElementById("sortDirBtn");
+
+    let allVideos = [];
+    let descending = true;
+    let filterTimer = null;
+    const filters = {
+      year: "",
+      genre: "",
+      actress: "",
+      studio: "",
+      duration: "",
+      rating: "",
+    };
+
+    async function get(url) {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(res.statusText);
+      return res.json();
+    }
+
+    function escapeHtml(text) {
+      return (text || "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;");
+    }
+
+    function safeNumber(value, fallback = 0) {
+      const n = Number(value);
+      return Number.isFinite(n) ? n : fallback;
+    }
+
+    function parseYear(v) {
+      const value = String(v.release_date || "");
+      const year = value.slice(0, 4);
+      return /^\\d{4}$/.test(year) ? year : "";
+    }
+
+    function topValues(items, limit = 24) {
+      const count = new Map();
+      for (const item of items) {
+        count.set(item, (count.get(item) || 0) + 1);
+      }
+      return [...count.entries()]
+        .sort((a, b) => (b[1] - a[1]) || a[0].localeCompare(b[0]))
+        .slice(0, limit)
+        .map((x) => x[0]);
+    }
+
+    function fillSelect(selectEl, options, label) {
+      const current = selectEl.value;
+      selectEl.innerHTML = "";
+      const first = document.createElement("option");
+      first.value = "";
+      first.textContent = label;
+      selectEl.appendChild(first);
+      for (const opt of options) {
+        const o = document.createElement("option");
+        o.value = opt;
+        o.textContent = opt;
+        selectEl.appendChild(o);
+      }
+      if ([...selectEl.options].some((o) => o.value === current)) {
+        selectEl.value = current;
+      } else {
+        selectEl.value = "";
+      }
+    }
+
+    function fuzzySubsequenceScore(text, query) {
+      if (!text || !query) return 0;
+      let qi = 0;
+      let run = 0;
+      let bonus = 0;
+      const source = text.toLowerCase();
+      for (let i = 0; i < source.length && qi < query.length; i++) {
+        if (source[i] === query[qi]) {
+          qi += 1;
+          run += 1;
+          bonus += run * 0.4;
+        } else {
+          run = 0;
+        }
+      }
+      if (qi < query.length) return 0;
+      return qi + bonus;
+    }
+
+    function fuzzyScore(video, query) {
+      if (!query) return 1000;
+      const q = query.toLowerCase();
+      const fields = [
+        video.jav_id || "",
+        video.title || "",
+        video.publisher || "",
+        ...(video.actresses || []),
+        ...(video.genres || []),
+      ];
+      let best = 0;
+      for (const raw of fields) {
+        const text = String(raw || "").toLowerCase();
+        if (!text) continue;
+        if (text === q) best = Math.max(best, 100);
+        else if (text.startsWith(q)) best = Math.max(best, 60);
+        else if (text.includes(q)) best = Math.max(best, 40 + Math.min(q.length, 18));
+        else best = Math.max(best, fuzzySubsequenceScore(text, q));
+      }
+      return best;
+    }
+
+    function matchDuration(video, bucket) {
+      if (!bucket) return true;
+      const d = safeNumber(video.duration_min, 0);
+      if (!d) return bucket === "unknown";
+      if (bucket === "short") return d < 90;
+      if (bucket === "mid") return d >= 90 && d < 150;
+      if (bucket === "long") return d >= 150;
+      return true;
+    }
+
+    function matchRating(video, bucket) {
+      if (!bucket) return true;
+      const r = Number(video.rating);
+      if (!Number.isFinite(r)) return bucket === "unrated";
+      if (bucket === "high") return r >= 4;
+      if (bucket === "mid") return r >= 3 && r < 4;
+      if (bucket === "low") return r < 3;
+      return true;
+    }
+
+    function matchesFacets(video) {
+      if (filters.year && parseYear(video) !== filters.year) return false;
+      if (filters.genre && !(video.genres || []).includes(filters.genre)) return false;
+      if (filters.actress && !(video.actresses || []).includes(filters.actress)) return false;
+      if (filters.studio && (video.publisher || "") !== filters.studio) return false;
+      if (!matchDuration(video, filters.duration)) return false;
+      if (!matchRating(video, filters.rating)) return false;
+      return true;
+    }
+
+    function updateFacetOptions(sourceVideos) {
+      const years = [...new Set(sourceVideos.map(parseYear).filter(Boolean))].sort((a, b) => b.localeCompare(a));
+      const genres = topValues(sourceVideos.flatMap((v) => (v.genres || []).filter(Boolean)), 36);
+      const actresses = topValues(sourceVideos.flatMap((v) => (v.actresses || []).filter(Boolean)), 36);
+      const studios = topValues(sourceVideos.map((v) => v.publisher || "").filter(Boolean), 28);
+      fillSelect(filterYearEl, years, "Year");
+      fillSelect(filterGenreEl, genres, "Genre");
+      fillSelect(filterActressEl, actresses, "Actress");
+      fillSelect(filterStudioEl, studios, "Studio");
+    }
+
+    function renderActiveFilters() {
+      activeFiltersEl.innerHTML = "";
+      const entries = [
+        ["year", filters.year],
+        ["genre", filters.genre],
+        ["actress", filters.actress],
+        ["studio", filters.studio],
+        ["duration", filters.duration],
+        ["rating", filters.rating],
+      ].filter(([, value]) => !!value);
+      if (!entries.length) {
+        activeFiltersEl.innerHTML = '<span class="hint">No active filters.</span>';
+        return;
+      }
+      for (const [key, value] of entries) {
+        const chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "chip";
+        chip.textContent = key + ": " + value + "  ×";
+        chip.addEventListener("click", () => {
+          filters[key] = "";
+          syncFilterControls();
+          applyFilter();
+        });
+        activeFiltersEl.appendChild(chip);
+      }
+    }
+
+    function formatDuration(sec) {
+      const total = Math.max(0, Math.floor(safeNumber(sec, 0)));
+      const h = Math.floor(total / 3600);
+      const m = Math.floor((total % 3600) / 60);
+      const s = total % 60;
+      if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+      return `${m}:${String(s).padStart(2, "0")}`;
+    }
+
+    function cardMarkup(v) {
+      const progress = Math.max(0, Math.min(100, safeNumber(v.progress_percent, 0)));
+      const isResume = progress >= 3 && progress < 96;
+      const isCompleted = progress >= 96;
+      const statusLabel = isCompleted
+        ? "Completed"
+        : (isResume ? ("Resume " + Math.round(progress) + "%") : "New");
+      const statusStyle = isCompleted
+        ? "background:rgba(148, 163, 184, 0.18); border-color:rgba(148, 163, 184, 0.5); color:#e2e8f0;"
+        : (isResume
+          ? "background:rgba(249, 115, 22, 0.16); border-color:rgba(249, 115, 22, 0.56); color:#ffd7b0;"
+          : "background:rgba(16, 185, 129, 0.14); border-color:rgba(16, 185, 129, 0.55); color:#aef5d4;");
+      const timeHint = isResume ? formatDuration(v.progress_sec || 0) : "";
+      return `
+        <div class="card-thumb">
+          <img src="${v.poster_url}" alt="${escapeHtml(v.jav_id)}" loading="lazy" />
+          <video muted loop playsinline preload="none" src="${v.preview_url}"></video>
+          <div style="position:absolute; inset:auto 0 0; padding:7px 8px; background:linear-gradient(180deg, transparent, rgba(0,0,0,.8)); display:flex; justify-content:space-between; gap:8px;">
+            <span class="pill" style="background:rgba(5, 14, 22, 0.8); border-color:#45698b;">${escapeHtml(v.jav_id)}</span>
+            <span class="pill" style="${statusStyle}">${statusLabel}</span>
+          </div>
+        </div>
+        <div class="card-meta">
+          <div class="card-title">${escapeHtml(v.title || "Untitled")}</div>
+          <div class="card-sub">${escapeHtml(v.release_date || "-")} ${escapeHtml(v.publisher || "")}</div>
+          ${isResume ? `<div class="hint" style="font-size:12px; margin-top:1px;">Continue from ${timeHint}</div>` : ""}
+          <div style="margin-top:4px; height:4px; width:100%; border-radius:999px; background:rgba(191, 219, 254, 0.18); overflow:hidden;">
+            <div style="height:100%; width:${progress}%; background:linear-gradient(90deg, #22d3ee, #0ea5a4);"></div>
+          </div>
+        </div>
+      `;
+    }
+
+    function attachCardEffects(card) {
+      const preview = card.querySelector("video");
+      if (window.matchMedia("(hover: none)").matches) return;
+      card.addEventListener("mouseenter", () => {
+        preview.style.opacity = "1";
+        preview.play().catch(() => {});
+      });
+      card.addEventListener("mouseleave", () => {
+        preview.style.opacity = "0";
+        preview.pause();
+        preview.currentTime = 0;
+      });
+    }
+
+    function renderGrid(videos) {
+      gridEl.innerHTML = "";
+      resultCountEl.textContent = videos.length + " of " + allVideos.length + " title(s)";
+      if (!videos.length) {
+        gridEl.innerHTML = '<div class="empty-state">No titles match your current filters. Try clearing one or two filters.</div>';
+        return;
+      }
+      for (const v of videos) {
+        const card = document.createElement("a");
+        card.className = "card";
+        card.href = "/video/" + encodeURIComponent(v.jav_id);
+        card.innerHTML = cardMarkup(v);
+        attachCardEffects(card);
+        gridEl.appendChild(card);
+      }
+    }
+
+    function compareVideos(a, b) {
+      const sortBy = sortByEl.value;
+      if (sortBy === "newest") return (b.release_date || "").localeCompare(a.release_date || "");
+      if (sortBy === "oldest") return (a.release_date || "").localeCompare(b.release_date || "");
+      if (sortBy === "rating") return safeNumber(b.rating, -1) - safeNumber(a.rating, -1);
+      if (sortBy === "progress") return safeNumber(b.progress_percent, 0) - safeNumber(a.progress_percent, 0);
+      if (sortBy === "title") return (a.title || a.jav_id || "").localeCompare(b.title || b.jav_id || "");
+      return safeNumber(b.recommendation_score, 0) - safeNumber(a.recommendation_score, 0);
+    }
+
+    function syncFilterControls() {
+      filterYearEl.value = filters.year;
+      filterGenreEl.value = filters.genre;
+      filterActressEl.value = filters.actress;
+      filterStudioEl.value = filters.studio;
+      filterDurationEl.value = filters.duration;
+      filterRatingEl.value = filters.rating;
+    }
+
+    function applyFilter() {
+      const query = searchInput.value.trim().toLowerCase();
+      const source = allVideos
+        .map((v) => ({v, score: fuzzyScore(v, query)}))
+        .filter((entry) => entry.score > 0)
+        .filter((entry) => matchesFacets(entry.v))
+        .sort((a, b) => {
+          const scoreDiff = b.score - a.score;
+          if (scoreDiff) return scoreDiff;
+          return compareVideos(a.v, b.v);
+        })
+        .map((entry) => entry.v);
+      source.sort(compareVideos);
+      const out = descending ? source : [...source].reverse();
+      renderGrid(out);
+      updateFacetOptions(query ? out : allVideos);
+      renderActiveFilters();
+    }
+
+    async function init() {
+      allVideos = await get("/api/videos");
+      updateFacetOptions(allVideos);
+      renderActiveFilters();
+      renderGrid(allVideos.sort(compareVideos));
+    }
+
+    searchInput.addEventListener("input", () => {
+      if (filterTimer) window.clearTimeout(filterTimer);
+      filterTimer = window.setTimeout(applyFilter, 140);
+    });
+    filterYearEl.addEventListener("change", () => { filters.year = filterYearEl.value; applyFilter(); });
+    filterGenreEl.addEventListener("change", () => { filters.genre = filterGenreEl.value; applyFilter(); });
+    filterActressEl.addEventListener("change", () => { filters.actress = filterActressEl.value; applyFilter(); });
+    filterStudioEl.addEventListener("change", () => { filters.studio = filterStudioEl.value; applyFilter(); });
+    filterDurationEl.addEventListener("change", () => { filters.duration = filterDurationEl.value; applyFilter(); });
+    filterRatingEl.addEventListener("change", () => { filters.rating = filterRatingEl.value; applyFilter(); });
+    sortByEl.addEventListener("change", applyFilter);
+    sortDirBtn.addEventListener("click", () => {
+      descending = !descending;
+      sortDirBtn.textContent = descending ? "Descending" : "Ascending";
+      applyFilter();
+    });
+    clearFiltersBtn.addEventListener("click", () => {
+      searchInput.value = "";
+      filters.year = "";
+      filters.genre = "";
+      filters.actress = "";
+      filters.studio = "";
+      filters.duration = "";
+      filters.rating = "";
+      syncFilterControls();
+      applyFilter();
     });
 
     init().catch((error) => {
