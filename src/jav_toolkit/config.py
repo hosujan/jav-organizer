@@ -73,6 +73,11 @@ CREATE TABLE IF NOT EXISTS watch_progress (
     updated_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (jav_id) REFERENCES videos(jav_id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS app_settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT
+);
 """
 
 
@@ -85,3 +90,22 @@ def open_db(db_path: str | Path) -> sqlite3.Connection:
         conn.execute("ALTER TABLE videos ADD COLUMN local_video_path TEXT")
     conn.commit()
     return conn
+
+
+def get_setting(conn: sqlite3.Connection, key: str) -> str | None:
+    row = conn.execute(
+        "SELECT value FROM app_settings WHERE key=?",
+        (key,),
+    ).fetchone()
+    return row["value"] if row else None
+
+
+def set_setting(conn: sqlite3.Connection, key: str, value: str):
+    conn.execute(
+        """
+        INSERT INTO app_settings (key, value) VALUES (?, ?)
+        ON CONFLICT(key) DO UPDATE SET value=excluded.value
+        """,
+        (key, value),
+    )
+    conn.commit()

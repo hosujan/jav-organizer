@@ -145,7 +145,7 @@ def _layout(title: str, active: str, content: str, script: str = "") -> str:
       letter-spacing: 0.01em;
     }}
     .hint {{ color: var(--muted); font-size: 13px; }}
-    button, input {{
+    button, input, select {{
       font: inherit;
       color: var(--ink);
       border-radius: 10px;
@@ -453,6 +453,10 @@ ORGANIZE_HTML = _layout(
 
     async function refresh() {
       const [state, videos] = await Promise.all([get("/api/state"), get("/api/videos")]);
+      if (state.selected_dir) {
+        manualPath.value = state.selected_dir;
+        statusEl.textContent = "Selected: " + state.selected_dir + " (" + state.total + " matched videos)";
+      }
       const current = state.current ? " current: " + state.current : "";
       progressEl.textContent = state.processed + " / " + state.total + (state.processing ? " (running)" : " (idle)") + current;
       renderLogs(state.logs || []);
@@ -500,6 +504,35 @@ VIEW_HTML = _layout(
     </div>
   </section>
 
+  <section class="panel" style="margin-top:14px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+      <strong>Smart Discovery</strong>
+      <button id="clearFiltersBtn" type="button" style="padding:7px 10px;">Clear Filters</button>
+    </div>
+    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:8px; margin-top:10px;">
+      <select id="filterYear" style="width:100%;"><option value="">Year</option></select>
+      <select id="filterGenre" style="width:100%;"><option value="">Genre</option></select>
+      <select id="filterActress" style="width:100%;"><option value="">Actress</option></select>
+      <select id="filterStudio" style="width:100%;"><option value="">Studio</option></select>
+      <select id="filterDuration" style="width:100%;">
+        <option value="">Duration</option>
+        <option value="short">Under 90 min</option>
+        <option value="mid">90-150 min</option>
+        <option value="long">150+ min</option>
+        <option value="unknown">Unknown</option>
+      </select>
+      <select id="filterRating" style="width:100%;">
+        <option value="">Rating</option>
+        <option value="high">4.0+</option>
+        <option value="mid">3.0-3.9</option>
+        <option value="low">Below 3.0</option>
+        <option value="unrated">Unrated</option>
+      </select>
+    </div>
+    <div id="activeFilters" style="display:flex; flex-wrap:wrap; gap:6px; margin-top:10px;"></div>
+    <div id="quickChips" style="display:flex; flex-wrap:wrap; gap:6px; margin-top:10px;"></div>
+  </section>
+
   <section id="rails" style="margin-top:14px;"></section>
 
   <section class="panel" style="margin-top:14px;">
@@ -522,9 +555,27 @@ VIEW_HTML = _layout(
     const heroMetaEl = document.getElementById("heroMeta");
     const heroPlayEl = document.getElementById("heroPlay");
     const heroInfoEl = document.getElementById("heroInfo");
+    const filterYearEl = document.getElementById("filterYear");
+    const filterGenreEl = document.getElementById("filterGenre");
+    const filterActressEl = document.getElementById("filterActress");
+    const filterStudioEl = document.getElementById("filterStudio");
+    const filterDurationEl = document.getElementById("filterDuration");
+    const filterRatingEl = document.getElementById("filterRating");
+    const activeFiltersEl = document.getElementById("activeFilters");
+    const quickChipsEl = document.getElementById("quickChips");
+    const clearFiltersBtn = document.getElementById("clearFiltersBtn");
 
     let allVideos = [];
     let activeRailScroller = null;
+    let filteredVideos = [];
+    const filters = {
+      year: "",
+      genre: "",
+      actress: "",
+      studio: "",
+      duration: "",
+      rating: "",
+    };
 
     async function get(url) {
       const res = await fetch(url);
@@ -567,6 +618,129 @@ VIEW_HTML = _layout(
     function valueTime(value) {
       const t = Date.parse(value || "");
       return Number.isFinite(t) ? t : 0;
+    }
+
+    function parseYear(v) {
+      const value = String(v.release_date || "");
+      const year = value.slice(0, 4);
+      return /^\\d{4}$/.test(year) ? year : "";
+    }
+
+    function hasFacet(videoList, key, value) {
+      return videoList.some((v) => {
+        if (key === "genre") return (v.genres || []).includes(value);
+        if (key === "actress") return (v.actresses || []).includes(value);
+        if (key === "studio") return (v.publisher || "") === value;
+        if (key === "year") return parseYear(v) === value;
+        return false;
+      });
+    }
+
+    function fillSelect(selectEl, options, label) {
+      if (!selectEl) return;
+      const current = selectEl.value;
+      selectEl.innerHTML = "";
+      const first = document.createElement("option");
+      first.value = "";
+      first.textContent = label;
+      selectEl.appendChild(first);
+      for (const opt of options) {
+        const o = document.createElement("option");
+        o.value = opt;
+        o.textContent = opt;
+        selectEl.appendChild(o);
+      }
+      if ([...selectEl.options].some((o) => o.value === current)) {
+        selectEl.value = current;
+      } else {
+        selectEl.value = "";
+      }
+    }
+
+    function topValues(items, limit = 24) {
+      const count = new Map();
+      for (const item of items) {
+        count.set(item, (count.get(item) || 0) + 1);
+      }
+      return [...count.entries()]
+        .sort((a, b) => (b[1] - a[1]) || a[0].localeCompare(b[0]))
+        .slice(0, limit)
+        .map((x) => x[0]);
+    }
+
+    function fuzzySubsequenceScore(text, query) {
+      if (!text || !query) return 0;
+      let qi = 0;
+      let run = 0;
+      let bonus = 0;
+      const source = text.toLowerCase();
+      for (let i = 0; i < source.length && qi < query.length; i++) {
+        if (source[i] === query[qi]) {
+          qi += 1;
+          run += 1;
+          bonus += run * 0.4;
+        } else {
+          run = 0;
+        }
+      }
+      if (qi < query.length) return 0;
+      return qi + bonus;
+    }
+
+    function fuzzyScore(video, query) {
+      if (!query) return 1000;
+      const q = query.toLowerCase();
+      const fields = [
+        video.jav_id || "",
+        video.title || "",
+        video.publisher || "",
+        ...(video.actresses || []),
+        ...(video.genres || []),
+      ];
+      let best = 0;
+      for (const raw of fields) {
+        const text = String(raw || "").toLowerCase();
+        if (!text) continue;
+        if (text === q) best = Math.max(best, 100);
+        else if (text.startsWith(q)) best = Math.max(best, 60);
+        else if (text.includes(q)) best = Math.max(best, 40 + Math.min(q.length, 18));
+        else best = Math.max(best, fuzzySubsequenceScore(text, q));
+      }
+      return best;
+    }
+
+    function matchDuration(video, bucket) {
+      if (!bucket) return true;
+      const d = safeNumber(video.duration_min, 0);
+      if (!d) return bucket === "unknown";
+      if (bucket === "short") return d < 90;
+      if (bucket === "mid") return d >= 90 && d < 150;
+      if (bucket === "long") return d >= 150;
+      return true;
+    }
+
+    function matchRating(video, bucket) {
+      if (!bucket) return true;
+      const r = Number(video.rating);
+      if (!Number.isFinite(r)) return bucket === "unrated";
+      if (bucket === "high") return r >= 4;
+      if (bucket === "mid") return r >= 3 && r < 4;
+      if (bucket === "low") return r < 3;
+      return true;
+    }
+
+    function matchesFacets(video) {
+      if (filters.year && parseYear(video) !== filters.year) return false;
+      if (filters.genre && !(video.genres || []).includes(filters.genre)) return false;
+      if (filters.actress && !(video.actresses || []).includes(filters.actress)) return false;
+      if (filters.studio && (video.publisher || "") !== filters.studio) return false;
+      if (!matchDuration(video, filters.duration)) return false;
+      if (!matchRating(video, filters.rating)) return false;
+      return true;
+    }
+
+    function isAnyFacetActive() {
+      return Object.values(filters).some((v) => !!v);
     }
 
     function byRecent(a, b) {
@@ -774,31 +948,187 @@ VIEW_HTML = _layout(
       if (withPreview.length) railsEl.appendChild(buildRail("Preview Available", withPreview));
     }
 
-    function applyFilter() {
-      const query = searchInput.value.trim().toLowerCase();
-      if (!query) {
-        renderHero(pickFeatured(allVideos));
-        buildRails(allVideos);
-        renderGrid(allVideos);
+    function renderActiveFilters() {
+      if (!activeFiltersEl) return;
+      activeFiltersEl.innerHTML = "";
+      const entries = [
+        ["year", filters.year],
+        ["genre", filters.genre],
+        ["actress", filters.actress],
+        ["studio", filters.studio],
+        ["duration", filters.duration],
+        ["rating", filters.rating],
+      ].filter(([, value]) => !!value);
+      if (!entries.length) {
+        activeFiltersEl.innerHTML = '<span class="hint">No active filters.</span>';
         return;
       }
+      for (const [key, value] of entries) {
+        const chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "chip";
+        chip.textContent = key + ": " + value + "  ×";
+        chip.addEventListener("click", () => {
+          filters[key] = "";
+          syncFilterControls();
+          applyFilter();
+        });
+        activeFiltersEl.appendChild(chip);
+      }
+    }
 
-      const filtered = allVideos.filter((v) => {
-        return (v.jav_id || "").toLowerCase().includes(query) || (v.title || "").toLowerCase().includes(query);
-      });
-      renderHero(pickFeatured(filtered));
-      buildRails(filtered);
-      renderGrid(filtered);
+    function updateFacetOptions(sourceVideos) {
+      const years = [...new Set(sourceVideos.map(parseYear).filter(Boolean))].sort((a, b) => b.localeCompare(a));
+      const genres = topValues(sourceVideos.flatMap((v) => (v.genres || []).filter(Boolean)), 36);
+      const actresses = topValues(sourceVideos.flatMap((v) => (v.actresses || []).filter(Boolean)), 36);
+      const studios = topValues(sourceVideos.map((v) => v.publisher || "").filter(Boolean), 28);
+
+      fillSelect(filterYearEl, years, "Year");
+      fillSelect(filterGenreEl, genres, "Genre");
+      fillSelect(filterActressEl, actresses, "Actress");
+      fillSelect(filterStudioEl, studios, "Studio");
+    }
+
+    function renderQuickChips(videos) {
+      if (!quickChipsEl) return;
+      quickChipsEl.innerHTML = "";
+      const chips = [];
+      if (filters.genre && hasFacet(videos, "genre", filters.genre)) {
+        chips.push({label: "Genre: " + filters.genre, key: "genre", value: filters.genre});
+      } else {
+        const topGenre = topValues(videos.flatMap((v) => v.genres || []), 1)[0];
+        if (topGenre) chips.push({label: "Top Genre: " + topGenre, key: "genre", value: topGenre});
+      }
+      const resume = videos.find((v) => safeNumber(v.progress_percent, 0) >= 3 && safeNumber(v.progress_percent, 0) < 96);
+      if (resume) chips.push({label: "Resume Ready", key: "resume", value: "resume"});
+      const unrated = videos.find((v) => !Number.isFinite(Number(v.rating)));
+      if (unrated) chips.push({label: "Unrated", key: "rating", value: "unrated"});
+      const longForm = videos.find((v) => safeNumber(v.duration_min, 0) >= 150);
+      if (longForm) chips.push({label: "Long Watch", key: "duration", value: "long"});
+      const topActress = topValues(videos.flatMap((v) => v.actresses || []), 1)[0];
+      if (topActress) chips.push({label: "Actress: " + topActress, key: "actress", value: topActress});
+      const topStudio = topValues(videos.map((v) => v.publisher || "").filter(Boolean), 1)[0];
+      if (topStudio) chips.push({label: "Studio: " + topStudio, key: "studio", value: topStudio});
+
+      for (const chipInfo of chips.slice(0, 8)) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "chip";
+        btn.textContent = chipInfo.label;
+        btn.addEventListener("click", () => {
+          if (chipInfo.key === "resume") {
+            searchInput.value = "";
+            filteredVideos = allVideos.filter((v) => safeNumber(v.progress_percent, 0) >= 3 && safeNumber(v.progress_percent, 0) < 96);
+            renderHero(pickFeatured(filteredVideos));
+            buildRails(filteredVideos);
+            renderGrid(filteredVideos);
+            resultCountEl.textContent = filteredVideos.length + " title(s) • Resume";
+            return;
+          }
+          filters[chipInfo.key] = chipInfo.value;
+          syncFilterControls();
+          applyFilter();
+        });
+        quickChipsEl.appendChild(btn);
+      }
+    }
+
+    function syncFilterControls() {
+      if (filterYearEl) filterYearEl.value = filters.year;
+      if (filterGenreEl) filterGenreEl.value = filters.genre;
+      if (filterActressEl) filterActressEl.value = filters.actress;
+      if (filterStudioEl) filterStudioEl.value = filters.studio;
+      if (filterDurationEl) filterDurationEl.value = filters.duration;
+      if (filterRatingEl) filterRatingEl.value = filters.rating;
+    }
+
+    function applyFilter() {
+      const query = searchInput.value.trim().toLowerCase();
+      const usedFacets = isAnyFacetActive();
+
+      const ranked = allVideos
+        .map((v) => ({v, score: fuzzyScore(v, query)}))
+        .filter((entry) => entry.score > 0)
+        .filter((entry) => matchesFacets(entry.v))
+        .sort((a, b) => {
+          const scoreDiff = b.score - a.score;
+          if (scoreDiff) return scoreDiff;
+          return safeNumber(b.v.recommendation_score, 0) - safeNumber(a.v.recommendation_score, 0);
+        });
+      filteredVideos = ranked.map((entry) => entry.v);
+
+      renderHero(pickFeatured(filteredVideos));
+      buildRails(filteredVideos);
+      renderGrid(filteredVideos);
+      updateFacetOptions(query || usedFacets ? filteredVideos : allVideos);
+      renderActiveFilters();
+      renderQuickChips(filteredVideos.length ? filteredVideos : allVideos);
+
+      if (query || usedFacets) {
+        resultCountEl.textContent = filteredVideos.length + " title(s) • refined";
+      }
     }
 
     async function init() {
       allVideos = await get("/api/videos");
+      updateFacetOptions(allVideos);
       renderHero(pickFeatured(allVideos));
       buildRails(allVideos);
       renderGrid(allVideos);
+      renderActiveFilters();
+      renderQuickChips(allVideos);
     }
 
     searchInput.addEventListener("input", applyFilter);
+    if (filterYearEl) {
+      filterYearEl.addEventListener("change", () => {
+        filters.year = filterYearEl.value;
+        applyFilter();
+      });
+    }
+    if (filterGenreEl) {
+      filterGenreEl.addEventListener("change", () => {
+        filters.genre = filterGenreEl.value;
+        applyFilter();
+      });
+    }
+    if (filterActressEl) {
+      filterActressEl.addEventListener("change", () => {
+        filters.actress = filterActressEl.value;
+        applyFilter();
+      });
+    }
+    if (filterStudioEl) {
+      filterStudioEl.addEventListener("change", () => {
+        filters.studio = filterStudioEl.value;
+        applyFilter();
+      });
+    }
+    if (filterDurationEl) {
+      filterDurationEl.addEventListener("change", () => {
+        filters.duration = filterDurationEl.value;
+        applyFilter();
+      });
+    }
+    if (filterRatingEl) {
+      filterRatingEl.addEventListener("change", () => {
+        filters.rating = filterRatingEl.value;
+        applyFilter();
+      });
+    }
+    if (clearFiltersBtn) {
+      clearFiltersBtn.addEventListener("click", () => {
+        searchInput.value = "";
+        filters.year = "";
+        filters.genre = "";
+        filters.actress = "";
+        filters.studio = "";
+        filters.duration = "";
+        filters.rating = "";
+        syncFilterControls();
+        applyFilter();
+      });
+    }
     document.addEventListener("keydown", (event) => {
       if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
       const tag = event.target && event.target.tagName ? event.target.tagName.toLowerCase() : "";

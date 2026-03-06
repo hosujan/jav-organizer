@@ -10,7 +10,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
-from ..config import MEDIA_DIR, open_db
+from ..config import MEDIA_DIR, get_setting, open_db, set_setting
 from .dialogs import choose_directory_dialog
 from .pages import ORGANIZE_HTML, VIDEO_HTML, VIEW_HTML, WATCH_HTML
 from .processor import process_queue
@@ -76,6 +76,13 @@ class AppHandler(BaseHTTPRequestHandler):
             self.send_error(404, "not found")
             return
 
+        def safe_write(data: bytes) -> bool:
+            try:
+                self.wfile.write(data)
+                return True
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                return False
+
         ctype = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
         size = path.stat().st_size
         range_header = self.headers.get("Range")
@@ -98,7 +105,10 @@ class AppHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
             self.send_header("Accept-Ranges", "bytes")
             self.send_header("Content-Length", str(length))
-            self.end_headers()
+            try:
+                self.end_headers()
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                return
 
             with path.open("rb") as file_obj:
                 file_obj.seek(start)
@@ -107,7 +117,8 @@ class AppHandler(BaseHTTPRequestHandler):
                     chunk = file_obj.read(min(1024 * 64, remaining))
                     if not chunk:
                         break
-                    self.wfile.write(chunk)
+                    if not safe_write(chunk):
+                        return
                     remaining -= len(chunk)
             return
 
@@ -116,13 +127,17 @@ class AppHandler(BaseHTTPRequestHandler):
         if allow_range:
             self.send_header("Accept-Ranges", "bytes")
         self.send_header("Content-Length", str(size))
-        self.end_headers()
+        try:
+            self.end_headers()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            return
         with path.open("rb") as file_obj:
             while True:
                 chunk = file_obj.read(1024 * 64)
                 if not chunk:
                     break
-                self.wfile.write(chunk)
+                if not safe_write(chunk):
+                    return
 
     def _query(self) -> dict[str, list[str]]:
         return parse_qs(urlparse(self.path).query)
@@ -588,6 +603,11 @@ class AppHandler(BaseHTTPRequestHandler):
                 self.state.total = len(items)
                 self.state.current = None
                 self.state.logs = []
+            conn = open_db(self.state.db_path)
+            try:
+                set_setting(conn, "last_video_dir", str(folder))
+            finally:
+                conn.close()
             self.state.add_log(f"[SCAN] {len(items)} file(s) with JAV IDs in {folder}")
             self._json({"ok": True, "selected_dir": str(folder), "count": len(items)})
             return
@@ -658,13 +678,32 @@ def main():
         db_path=Path(args.db),
         media_dir=Path(args.media_dir).expanduser().resolve(),
     )
+    start_dir: Path | None = None
     if args.video_dir:
-        folder = Path(args.video_dir).expanduser().resolve()
-        if folder.exists() and folder.is_dir():
-            state.selected_dir = folder
-            state.items = scan_video_files(folder)
-            state.total = len(state.items)
-            state.add_log(f"[SCAN] {len(state.items)} file(s) with JAV IDs in {folder}")
+        candidate = Path(args.video_dir).expanduser().resolve()
+        if candidate.exists() and candidate.is_dir():
+            start_dir = candidate
+    else:
+        conn = open_db(state.db_path)
+        try:
+            raw = get_setting(conn, "last_video_dir")
+        finally:
+            conn.close()
+        if raw:
+            candidate = Path(raw).expanduser().resolve()
+            if candidate.exists() and candidate.is_dir():
+                start_dir = candidate
+
+    if start_dir:
+        state.selected_dir = start_dir
+        state.items = scan_video_files(start_dir)
+        state.total = len(state.items)
+        state.add_log(f"[SCAN] {len(state.items)} file(s) with JAV IDs in {start_dir}")
+        conn = open_db(state.db_path)
+        try:
+            set_setting(conn, "last_video_dir", str(start_dir))
+        finally:
+            conn.close()
 
     AppHandler.state = state
     server = ThreadingHTTPServer((args.host, args.port), AppHandler)
