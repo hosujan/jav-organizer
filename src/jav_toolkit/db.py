@@ -1,13 +1,13 @@
 """
-jav-db — query and export the local JAV metadata database.
+jav db — query and export the local JAV metadata database.
 
 Usage:
-    jav-db list
-    jav-db show MISM-410
-    jav-db search "Emma"
-    jav-db stats
-    jav-db export --format json
-    jav-db export --format csv
+    jav db list
+    jav db show MISM-410
+    jav db search "Emma"
+    jav db stats
+    jav db export --format json
+    jav db export --format csv
 """
 
 from __future__ import annotations
@@ -177,8 +177,8 @@ def cmd_export(conn, fmt: str, db_path: str):
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
-def main():
-    parser = argparse.ArgumentParser(prog="jav-db", description="Query the JAV database")
+def main(argv: list[str] | None = None, prog: str = "jav db"):
+    parser = argparse.ArgumentParser(prog=prog, description="Query the JAV database")
     parser.add_argument("--db", default="jav.db")
     sub = parser.add_subparsers(dest="cmd")
 
@@ -188,7 +188,7 @@ def main():
     sub.add_parser("stats")
     p_exp  = sub.add_parser("export"); p_exp.add_argument("--format", choices=["json","csv"], default="json")
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if not args.cmd:
         parser.print_help(); sys.exit(1)
 

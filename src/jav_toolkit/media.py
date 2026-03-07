@@ -1,13 +1,13 @@
 """
-jav-media — download poster and preview MP4.
+jav fetch media — download poster and preview MP4.
 Uses Playwright to intercept real CDN URLs, with smart filtering to reject
 ad/tracker URLs and a CDN-pattern prober as fallback.
 
 Usage:
-    jav-media MISM-410
-    jav-media MISM-410 ABW-123
-    jav-media --file ids.txt --no-download
-    jav-media MISM-410 --media-dir /Volumes/NAS/jav/media
+    jav fetch media MISM-410
+    jav fetch media MISM-410 ABW-123
+    jav fetch media --file ids.txt --no-download
+    jav fetch media MISM-410 --media-dir /Volumes/NAS/jav/media
 """
 
 from __future__ import annotations
@@ -332,9 +332,9 @@ def save_media_urls(conn, jav_id: str, results: dict):
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
-def main():
+def main(argv: list[str] | None = None, prog: str = "jav fetch media"):
     parser = argparse.ArgumentParser(
-        prog="jav-media",
+        prog=prog,
         description="Download poster and preview MP4",
     )
     parser.add_argument("ids", nargs="*")
@@ -343,7 +343,7 @@ def main():
     parser.add_argument("--no-download", action="store_true",
                         help="Update DB with URLs only, skip downloading files")
     parser.add_argument("--media-dir", default=str(MEDIA_DIR))
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     ids = list(args.ids)
     if args.file:
