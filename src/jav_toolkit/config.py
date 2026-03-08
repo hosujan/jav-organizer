@@ -117,3 +117,38 @@ def set_setting(conn: sqlite3.Connection, key: str, value: str):
         (key, value),
     )
     conn.commit()
+
+
+def get_last_video_dir(db_path: str | Path) -> Path | None:
+    conn = open_db(db_path)
+    try:
+        raw = get_setting(conn, "last_video_dir")
+    finally:
+        conn.close()
+    if not raw:
+        return None
+    candidate = Path(raw).expanduser().resolve()
+    if candidate.exists() and candidate.is_dir():
+        return candidate
+    return None
+
+
+def resolve_media_root(
+    db_path: str | Path,
+    *,
+    video_dir: str | Path | None = None,
+    explicit_media_dir: str | Path | None = None,
+) -> Path | None:
+    if explicit_media_dir:
+        return Path(explicit_media_dir).expanduser().resolve()
+
+    if video_dir:
+        candidate = Path(video_dir).expanduser().resolve()
+        if candidate.exists() and candidate.is_dir():
+            return (candidate / "media").resolve()
+        return None
+
+    last_dir = get_last_video_dir(db_path)
+    if last_dir:
+        return (last_dir / "media").resolve()
+    return None
