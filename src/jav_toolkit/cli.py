@@ -60,6 +60,19 @@ try:
 except Exception:
     _CONSOLE = None
 
+try:
+    from prompt_toolkit import PromptSession
+    from prompt_toolkit.application.current import get_app
+    from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
+    from prompt_toolkit.completion import WordCompleter
+    from prompt_toolkit.history import FileHistory
+
+    _PTK_AVAILABLE = True
+except Exception:
+    _PTK_AVAILABLE = False
+
+_PROMPT_SESSION: PromptSession[str] | None = None if _PTK_AVAILABLE else None
+
 
 def _clear_screen() -> None:
     os.system("cls" if os.name == "nt" else "clear")
@@ -190,6 +203,49 @@ def _setup_readline() -> None:
             pass
 
     atexit.register(_save_history)
+
+
+def _setup_prompt_session() -> None:
+    global _PROMPT_SESSION
+    if not _PTK_AVAILABLE:
+        return
+    if _PROMPT_SESSION is not None:
+        return
+
+    completer = WordCompleter(list(_REPL_TOKENS), ignore_case=True, sentence=True)
+    _PROMPT_SESSION = PromptSession(
+        history=FileHistory(str(_HISTORY_FILE)),
+        completer=completer,
+        complete_while_typing=True,
+        auto_suggest=AutoSuggestFromHistory(),
+    )
+
+
+def _slash_toolbar() -> str:
+    if not _PTK_AVAILABLE:
+        return ""
+
+    text = get_app().current_buffer.text.strip()
+    if not text.startswith("/"):
+        return ""
+
+    if text == "/":
+        matches = list(_SLASH_COMMANDS.keys())
+    else:
+        matches = [cmd for cmd in _SLASH_COMMANDS if cmd.startswith(text)]
+
+    if not matches:
+        return "  no slash command matches"
+
+    lines = ["  slash commands:"]
+    lines.extend(f"    - {cmd}" for cmd in matches)
+    return "\n".join(lines)
+
+
+def _read_repl_input(prompt_text: str) -> str:
+    if _PROMPT_SESSION is not None:
+        return _PROMPT_SESSION.prompt(prompt_text, bottom_toolbar=_slash_toolbar)
+    return input(prompt_text)
 
 
 def _build_root_parser() -> argparse.ArgumentParser:
@@ -384,13 +440,16 @@ def _run_interactive_shell() -> None:
         print("No command provided. Use --help for usage.")
         raise SystemExit(1)
 
-    _setup_readline()
+    if _PTK_AVAILABLE:
+        _setup_prompt_session()
+    else:
+        _setup_readline()
     _clear_screen()
     _print_banner()
 
     while True:
         try:
-            raw = input("jav> ")
+            raw = _read_repl_input("jav> ")
         except (EOFError, KeyboardInterrupt):
             print("")
             return
