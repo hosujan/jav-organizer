@@ -1,8 +1,8 @@
 # jav-toolkit
 
 Local-first JAV organizer with CLI and web UI:
-- metadata scraping (`jav fetch info`)
-- media handling (`jav fetch media`)
+- metadata scraping (`jav fetch --info`)
+- media handling (`jav fetch --media`)
 - SQLite querying/export (`jav db`)
 - local web app (`jav serve`)
 

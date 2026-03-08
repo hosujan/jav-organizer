@@ -10,7 +10,8 @@
 
 ## Storage
 - Database: `jav.db` by default.
-- Media root: `media/` by default.
+- `jav fetch --media` default media root: repo `./media`.
+- `jav serve` media root: `<selected_video_dir>/media` (auto-created).
 
 Media structure:
 ```text
@@ -28,7 +29,7 @@ media/
 - `app_settings`: app-level persisted settings.
 
 ## Behavior Notes
-- Last selected video directory is stored in `app_settings.last_video_dir` and auto-restored in `jav-web`.
+- Last selected video directory is stored in `app_settings.last_video_dir` and auto-restored in `jav serve`.
 - Processing queue skips metadata fetch when JAV ID already exists in SQLite.
 - Processing queue skips media URL scrape when media URLs already exist in SQLite.
 - Media download step reuses existing local `poster.*` and `preview.mp4` when present.
