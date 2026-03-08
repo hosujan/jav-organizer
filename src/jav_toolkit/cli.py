@@ -3,22 +3,26 @@
 from __future__ import annotations
 
 import argparse
+import difflib
 import os
-import re
 import shlex
 import sys
+from contextlib import nullcontext
 from pathlib import Path
 
 from . import db, media, scraper
 from .web import server
 
-_ID_RE = re.compile(r"\b([A-Za-z]{2,10})[-_]?(\d{2,6})\b")
 _HISTORY_FILE = Path.home() / ".jav_cli_history"
+_SLASH_COMMANDS: dict[str, str] = {
+    "/help": "show help and examples",
+    "/clear": "clear screen and redraw banner",
+    "/quit": "exit interactive shell",
+}
+_ROOT_COMMANDS = ("fetch", "db", "serve")
 _REPL_TOKENS = sorted(
     {
-        "fetch",
-        "db",
-        "serve",
+        *_ROOT_COMMANDS,
         "--info",
         "--media",
         "--file",
@@ -34,9 +38,7 @@ _REPL_TOKENS = sorted(
         "--format",
         "json",
         "csv",
-        "/help",
-        "/clear",
-        "/quit",
+        *_SLASH_COMMANDS.keys(),
         "help",
         "clear",
         "quit",
@@ -49,6 +51,14 @@ _BANNER = r"""
 / /_/ / /_/ /| |/ /  / /___/ /____/ /
 \____/\__,_/ |___/   \____/_____/___/
 """
+try:
+    from rich.console import Console
+    from rich.panel import Panel
+    from rich.table import Table
+
+    _CONSOLE: Console | None = Console()
+except Exception:
+    _CONSOLE = None
 
 
 def _clear_screen() -> None:
@@ -68,6 +78,17 @@ def _print_info_box() -> None:
     max_dir_len = width - 15
     if len(display_cwd) > max_dir_len:
         display_cwd = "…" + display_cwd[-(max_dir_len - 1) :]
+
+    if _CONSOLE:
+        table = Table.grid(padding=(0, 1))
+        table.add_column()
+        table.add_column(justify="right")
+        table.add_row(f"[bold cyan]>_[/bold cyan] jav-toolkit (v{version})", "")
+        table.add_row("", "")
+        table.add_row("provider:  MissAV (zh)", "[dim]/config to change[/dim]")
+        table.add_row(f"directory: {display_cwd}", "")
+        _CONSOLE.print(Panel(table, border_style="bright_black", width=60))
+        return
 
     print(f"╭{'─' * (width - 2)}╮")
 
@@ -92,9 +113,33 @@ def _print_info_box() -> None:
 
 
 def _print_banner() -> None:
-    print(_BANNER)
+    if _CONSOLE:
+        _CONSOLE.print(f"[bold magenta]{_BANNER}[/bold magenta]")
+    else:
+        print(_BANNER)
     _print_info_box()
-    print("\nType `/help` for commands, `/quit` to exit.")
+    _print_status("Type `/help` for commands, `/quit` to exit.")
+
+
+def _print_status(message: str) -> None:
+    if _CONSOLE:
+        _CONSOLE.print(f"[dim]{message}[/dim]")
+    else:
+        print(message)
+
+
+def _print_agent_action(message: str) -> None:
+    if _CONSOLE:
+        _CONSOLE.print(f"[cyan][agent][/cyan] {message}")
+    else:
+        print(f"[agent] {message}")
+
+
+def _print_warn(message: str) -> None:
+    if _CONSOLE:
+        _CONSOLE.print(f"[yellow]{message}[/yellow]")
+    else:
+        print(message)
 
 
 def _setup_readline() -> None:
@@ -115,7 +160,7 @@ def _setup_readline() -> None:
         if text.startswith("/"):
             candidates = [token for token in _REPL_TOKENS if token.startswith("/")]
         elif at_cmd_start:
-            candidates = [token for token in ("fetch", "db", "serve", "/help", "/clear", "/quit")]
+            candidates = [token for token in (*_ROOT_COMMANDS, *_SLASH_COMMANDS.keys())]
 
         matches = [token for token in candidates if token.startswith(text)]
         return matches[state] if state < len(matches) else None
@@ -218,83 +263,54 @@ def _run_fetch(args: argparse.Namespace) -> None:
         media.main(media_argv, prog="jav fetch --media")
 
 
-def _extract_ids(text: str) -> list[str]:
-    found: list[str] = []
-    for prefix, number in _ID_RE.findall(text):
-        jav_id = f"{prefix.upper()}-{number}"
-        if jav_id not in found:
-            found.append(jav_id)
-    return found
-
-
 def _print_shell_help() -> None:
+    if _CONSOLE:
+        table = Table(title="Interactive Commands", show_header=True, header_style="bold cyan")
+        table.add_column("Category", style="green", no_wrap=True)
+        table.add_column("Examples")
+        table.add_row("CLI commands", "fetch --info MISM-410")
+        table.add_row("CLI commands", "fetch --media MISM-410 --no-download")
+        table.add_row("CLI commands", "db list | db show MISM-410 | db search Emma | db stats")
+        table.add_row("Slash commands", "/help  /clear  /quit")
+        _CONSOLE.print(table)
+        return
+
     print("Interactive commands:")
-    print("  fetch --info MISM-410")
-    print("  fetch --media MISM-410 --no-download")
-    print("  fetch MISM-410 ABW-123")
-    print("  db list | db show MISM-410 | db search Emma | db stats")
-    print("  serve")
+    print("  CLI commands:")
+    print("    fetch --info MISM-410")
+    print("    fetch --media MISM-410 --no-download")
+    print("    fetch MISM-410 ABW-123")
+    print("    db list | db show MISM-410 | db search Emma | db stats")
+    print("    serve")
     print("")
-    print("Natural prompts also work:")
-    print("  get metadata for MISM-410")
-    print("  download media for ABW-123 and SSIS-456")
-    print("  no-download preview for MISM-410")
-    print("")
+    print("  Slash commands:")
+    for cmd, desc in _SLASH_COMMANDS.items():
+        print(f"    {cmd:<7} {desc}")
+
+
+def _fuzzy_match(word: str, candidates: list[str], cutoff: float = 0.6) -> str | None:
+    matches = difflib.get_close_matches(word, candidates, n=1, cutoff=cutoff)
+    return matches[0] if matches else None
+
+
+def _print_slash_indicators(prefix: str = "") -> None:
+    commands = [cmd for cmd in _SLASH_COMMANDS if cmd.startswith(prefix)]
+    if not commands:
+        _print_warn(f"No slash commands match '{prefix}'.")
+        return
+
+    if _CONSOLE:
+        table = Table(title=f"Slash Commands ({prefix or 'all'})", show_header=True, header_style="bold magenta")
+        table.add_column("Command", style="green")
+        table.add_column("Description")
+        for cmd in commands:
+            table.add_row(cmd, _SLASH_COMMANDS[cmd])
+        _CONSOLE.print(table)
+        return
+
     print("Slash commands:")
-    print("  /help   show this help")
-    print("  /clear  clear screen and redraw banner")
-    print("  /quit   exit shell")
-
-
-def _translate_nl_to_argv(raw: str) -> list[str] | None:
-    text = raw.strip()
-    lower = text.lower()
-    ids = _extract_ids(text)
-
-    if lower in {"serve", "start server", "open web", "web ui", "ui"}:
-        return ["serve"]
-
-    if lower in {"db list", "list"}:
-        return ["db", "list"]
-    if lower in {"db stats", "stats"}:
-        return ["db", "stats"]
-
-    show_match = re.search(r"\b(?:show|detail)\s+([A-Za-z]{2,10}[-_]?\d{2,6})\b", text, re.IGNORECASE)
-    if show_match:
-        extracted = _extract_ids(show_match.group(1))
-        if extracted:
-            return ["db", "show", extracted[0]]
-
-    search_match = re.search(r"\b(?:search|find)\s+(.+)$", text, re.IGNORECASE)
-    if search_match and not ids:
-        return ["db", "search", search_match.group(1).strip()]
-
-    if "export" in lower:
-        if "csv" in lower:
-            return ["db", "export", "--format", "csv"]
-        return ["db", "export", "--format", "json"]
-
-    intent_info = any(word in lower for word in ("info", "metadata", "meta", "scrape", "detail"))
-    intent_media = any(word in lower for word in ("media", "poster", "preview", "download"))
-
-    if ids and not (intent_info or intent_media):
-        intent_info = True
-        intent_media = True
-
-    if ids and (intent_info or intent_media):
-        argv = ["fetch"]
-        if intent_info and not intent_media:
-            argv.append("--info")
-        elif intent_media and not intent_info:
-            argv.append("--media")
-        if "no-download" in lower or "no download" in lower:
-            argv.append("--no-download")
-        if "save-db" in lower or "save db" in lower:
-            argv.append("--save-db")
-        argv.extend(ids)
-        return argv
-
-    return None
+    for cmd in commands:
+        print(f"  {cmd:<7} {_SLASH_COMMANDS[cmd]}")
 
 
 def _parse_shell_input(raw: str) -> list[str] | None:
@@ -304,6 +320,9 @@ def _parse_shell_input(raw: str) -> list[str] | None:
 
     if text.startswith("/"):
         cmd = text[1:].strip().lower()
+        if not cmd:
+            _print_slash_indicators("/")
+            return None
         if cmd in {"quit", "exit", "q"}:
             return ["__quit__"]
         if cmd in {"clear", "cls"}:
@@ -311,8 +330,25 @@ def _parse_shell_input(raw: str) -> list[str] | None:
         if cmd in {"help", "h", "?"}:
             _print_shell_help()
             return None
-        print(f"Unknown slash command: /{cmd}")
-        print("Try /help")
+
+        full_cmd = "/" + cmd
+        prefix_matches = [name for name in _SLASH_COMMANDS if name.startswith(full_cmd)]
+        if prefix_matches:
+            _print_slash_indicators(full_cmd)
+            return None
+
+        corrected = _fuzzy_match(full_cmd, list(_SLASH_COMMANDS.keys()))
+        if corrected:
+            _print_agent_action(f"autocorrected {full_cmd} -> {corrected}")
+            if corrected == "/quit":
+                return ["__quit__"]
+            if corrected == "/clear":
+                return ["__clear__"]
+            _print_shell_help()
+            return None
+
+        _print_warn(f"Unknown slash command: {full_cmd}")
+        _print_status("Type `/` to see available slash commands.")
         return None
 
     if text.lower() in {"quit", "exit", "q"}:
@@ -326,19 +362,20 @@ def _parse_shell_input(raw: str) -> list[str] | None:
     try:
         tokens = shlex.split(text)
     except ValueError as err:
-        print(f"Parse error: {err}")
+        _print_warn(f"Parse error: {err}")
         return None
 
-    if tokens and tokens[0] in {"fetch", "db", "serve"}:
-        return tokens
+    if tokens:
+        first = tokens[0]
+        if first in _ROOT_COMMANDS:
+            return tokens
+        corrected = _fuzzy_match(first, list(_ROOT_COMMANDS))
+        if corrected:
+            _print_agent_action(f"autocorrected {first} -> {corrected}")
+            return [corrected, *tokens[1:]]
 
-    mapped = _translate_nl_to_argv(text)
-    if mapped:
-        print(f"[agent] -> jav {' '.join(mapped)}")
-        return mapped
-
-    print("Could not understand command.")
-    print("Try `fetch MISM-410`, `db list`, `serve`, or `/help`.")
+    _print_warn("Could not understand command.")
+    _print_status("Use CLI commands only: `fetch ...`, `db ...`, `serve`, `/`, or `/help`.")
     return None
 
 
@@ -358,6 +395,10 @@ def _run_interactive_shell() -> None:
             print("")
             return
 
+        if raw.strip() == "/":
+            _print_slash_indicators("/")
+            continue
+
         argv = _parse_shell_input(raw)
         if not argv:
             continue
@@ -369,7 +410,12 @@ def _run_interactive_shell() -> None:
             continue
 
         try:
-            _dispatch(argv)
+            context = _CONSOLE.status(
+                f"[bold green]Running[/bold green] jav {' '.join(argv)}...",
+                spinner="dots",
+            ) if _CONSOLE else nullcontext()
+            with context:
+                _dispatch(argv)
         except SystemExit:
             continue
 
