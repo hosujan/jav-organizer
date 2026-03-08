@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import argparse
-import difflib
 import os
 import shlex
 import sys
-from contextlib import nullcontext
 from pathlib import Path
 
 from . import db, media, scraper
@@ -23,13 +21,6 @@ _ROOT_COMMANDS = ("fetch", "db", "serve")
 _REPL_TOKENS = sorted(
     {
         *_ROOT_COMMANDS,
-        "--info",
-        "--media",
-        "--file",
-        "--db",
-        "--no-download",
-        "--save-db",
-        "--media-dir",
         "list",
         "show",
         "search",
@@ -38,6 +29,7 @@ _REPL_TOKENS = sorted(
         "--format",
         "json",
         "csv",
+        "jav",
         *_SLASH_COMMANDS.keys(),
         "help",
         "clear",
@@ -131,7 +123,7 @@ def _print_banner() -> None:
     else:
         print(_BANNER)
     _print_info_box()
-    _print_status("Type `/help` for commands, `/quit` to exit.")
+    _print_status("Exact commands only. Type `/help` for command syntax.")
 
 
 def _print_status(message: str) -> None:
@@ -139,13 +131,6 @@ def _print_status(message: str) -> None:
         _CONSOLE.print(f"[dim]{message}[/dim]")
     else:
         print(message)
-
-
-def _print_agent_action(message: str) -> None:
-    if _CONSOLE:
-        _CONSOLE.print(f"[cyan][agent][/cyan] {message}")
-    else:
-        print(f"[agent] {message}")
 
 
 def _print_warn(message: str) -> None:
@@ -173,7 +158,7 @@ def _setup_readline() -> None:
         if text.startswith("/"):
             candidates = [token for token in _REPL_TOKENS if token.startswith("/")]
         elif at_cmd_start:
-            candidates = [token for token in (*_ROOT_COMMANDS, *_SLASH_COMMANDS.keys())]
+            candidates = [token for token in (*_ROOT_COMMANDS, "jav", *_SLASH_COMMANDS.keys())]
 
         matches = [token for token in candidates if token.startswith(text)]
         return matches[state] if state < len(matches) else None
@@ -254,7 +239,7 @@ def _build_root_parser() -> argparse.ArgumentParser:
         description="Unified CLI for jav-toolkit",
     )
     sub = parser.add_subparsers(dest="command")
-    sub.add_parser("fetch", help="Fetch metadata/media workflows")
+    sub.add_parser("fetch", help="Fetch metadata + media by ID")
     sub.add_parser("db", help="Query/export local database")
     sub.add_parser("serve", help="Run local web frontend")
     return parser
@@ -263,60 +248,21 @@ def _build_root_parser() -> argparse.ArgumentParser:
 def _build_fetch_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="jav fetch",
-        description="Fetch metadata and/or media. Default: run info then media.",
+        description="Fetch metadata and media by ID.",
     )
-    parser.add_argument("ids", nargs="*", help="JAV IDs, e.g. MISM-410")
-    parser.add_argument("--file", "-f", help="Text file with one ID per line")
-    parser.add_argument("--db", default="jav.db", help="SQLite database path")
-    parser.add_argument("--info", action="store_true", help="Run metadata fetch only")
-    parser.add_argument("--media", action="store_true", help="Run media fetch only")
-    parser.add_argument(
-        "--no-download",
-        action="store_true",
-        help="When running media step, resolve URLs only",
-    )
-    parser.add_argument(
-        "--save-db",
-        action="store_true",
-        help="When running media step, save media URLs to DB",
-    )
-    parser.add_argument(
-        "--media-dir",
-        help="Override media output directory (default: ./media in repository root)",
-    )
+    parser.add_argument("ids", nargs="+", help="One or more JAV IDs, e.g. MISM-410")
     return parser
 
 
 def _run_fetch(args: argparse.Namespace) -> None:
-    run_info = args.info or not (args.info or args.media)
-    run_media = args.media or not (args.info or args.media)
+    info_argv = ["--save-db", "ask", *args.ids]
+    media_argv = list(args.ids)
+    media_root = Path("media").resolve()
 
-    info_argv: list[str] = []
-    media_argv: list[str] = []
-
-    if args.file:
-        info_argv += ["--file", args.file]
-        media_argv += ["--file", args.file]
-    info_argv += ["--db", args.db]
-    media_argv += ["--db", args.db]
-
-    if args.no_download:
-        media_argv.append("--no-download")
-    if args.save_db:
-        media_argv.append("--save-db")
-
-    if run_media:
-        media_root = Path(args.media_dir).expanduser().resolve() if args.media_dir else Path("media").resolve()
-        media_root.mkdir(parents=True, exist_ok=True)
-        media_argv += ["--media-dir", str(media_root)]
-
-    info_argv += list(args.ids)
-    media_argv += list(args.ids)
-
-    if run_info:
-        scraper.main(info_argv, prog="jav fetch --info")
-    if run_media:
-        media.main(media_argv, prog="jav fetch --media")
+    scraper.main(info_argv, prog="jav fetch")
+    media_root.mkdir(parents=True, exist_ok=True)
+    media_argv += ["--media-dir", str(media_root)]
+    media.main(media_argv, prog="jav fetch")
 
 
 def _print_shell_help() -> None:
@@ -324,29 +270,25 @@ def _print_shell_help() -> None:
         table = Table(title="Interactive Commands", show_header=True, header_style="bold cyan")
         table.add_column("Category", style="green", no_wrap=True)
         table.add_column("Examples")
-        table.add_row("CLI commands", "fetch --info MISM-410")
-        table.add_row("CLI commands", "fetch --media MISM-410 --no-download")
-        table.add_row("CLI commands", "db list | db show MISM-410 | db search Emma | db stats")
+        table.add_row("CLI commands", "fetch MISM-410")
+        table.add_row("CLI commands", "db search MISM-410")
+        table.add_row("CLI commands", "db show MISM-410 | db list | db stats")
+        table.add_row("CLI commands", "serve")
         table.add_row("Slash commands", "/help  /clear  /quit")
         _CONSOLE.print(table)
         return
 
     print("Interactive commands:")
     print("  CLI commands:")
-    print("    fetch --info MISM-410")
-    print("    fetch --media MISM-410 --no-download")
+    print("    fetch MISM-410")
     print("    fetch MISM-410 ABW-123")
-    print("    db list | db show MISM-410 | db search Emma | db stats")
+    print("    db search MISM-410")
+    print("    db list | db show MISM-410 | db stats")
     print("    serve")
     print("")
     print("  Slash commands:")
     for cmd, desc in _SLASH_COMMANDS.items():
         print(f"    {cmd:<7} {desc}")
-
-
-def _fuzzy_match(word: str, candidates: list[str], cutoff: float = 0.6) -> str | None:
-    matches = difflib.get_close_matches(word, candidates, n=1, cutoff=cutoff)
-    return matches[0] if matches else None
 
 
 def _print_slash_indicators(prefix: str = "") -> None:
@@ -376,42 +318,25 @@ def _parse_shell_input(raw: str) -> list[str] | None:
 
     if text.startswith("/"):
         cmd = text[1:].strip().lower()
+        if cmd == "quit":
+            return ["__quit__"]
+        if cmd == "clear":
+            return ["__clear__"]
+        if cmd == "help":
+            _print_shell_help()
+            return None
         if not cmd:
             _print_slash_indicators("/")
             return None
-        if cmd in {"quit", "exit", "q"}:
-            return ["__quit__"]
-        if cmd in {"clear", "cls"}:
-            return ["__clear__"]
-        if cmd in {"help", "h", "?"}:
-            _print_shell_help()
-            return None
-
-        full_cmd = "/" + cmd
-        prefix_matches = [name for name in _SLASH_COMMANDS if name.startswith(full_cmd)]
-        if prefix_matches:
-            _print_slash_indicators(full_cmd)
-            return None
-
-        corrected = _fuzzy_match(full_cmd, list(_SLASH_COMMANDS.keys()))
-        if corrected:
-            _print_agent_action(f"autocorrected {full_cmd} -> {corrected}")
-            if corrected == "/quit":
-                return ["__quit__"]
-            if corrected == "/clear":
-                return ["__clear__"]
-            _print_shell_help()
-            return None
-
-        _print_warn(f"Unknown slash command: {full_cmd}")
-        _print_status("Type `/` to see available slash commands.")
+        _print_warn(f"Unknown slash command: /{cmd}")
+        _print_status("Use exact slash commands: /help, /clear, /quit.")
         return None
 
-    if text.lower() in {"quit", "exit", "q"}:
+    if text.lower() == "quit":
         return ["__quit__"]
-    if text.lower() in {"clear", "cls"}:
+    if text.lower() == "clear":
         return ["__clear__"]
-    if text.lower() in {"help", "h", "?"}:
+    if text.lower() == "help":
         _print_shell_help()
         return None
 
@@ -422,16 +347,21 @@ def _parse_shell_input(raw: str) -> list[str] | None:
         return None
 
     if tokens:
+        if tokens[0].lower() == "jav":
+            tokens = tokens[1:]
+        if not tokens:
+            _print_status("Use exact commands: `fetch <id>`, `db ...`, `serve`, `/help`.")
+            return None
         first = tokens[0]
         if first in _ROOT_COMMANDS:
+            if first == "fetch":
+                if len(tokens) < 2 or any(part.startswith("-") for part in tokens[1:]):
+                    _print_warn("Invalid fetch syntax. Use exact form: fetch <id> or fetch <id1> <id2> ...")
+                    return None
             return tokens
-        corrected = _fuzzy_match(first, list(_ROOT_COMMANDS))
-        if corrected:
-            _print_agent_action(f"autocorrected {first} -> {corrected}")
-            return [corrected, *tokens[1:]]
 
     _print_warn("Could not understand command.")
-    _print_status("Use CLI commands only: `fetch ...`, `db ...`, `serve`, `/`, or `/help`.")
+    _print_status("Use exact commands: `fetch <id>`, `db ...`, `serve`, `/help`.")
     return None
 
 
@@ -469,12 +399,7 @@ def _run_interactive_shell() -> None:
             continue
 
         try:
-            context = _CONSOLE.status(
-                f"[bold green]Running[/bold green] jav {' '.join(argv)}...",
-                spinner="dots",
-            ) if _CONSOLE else nullcontext()
-            with context:
-                _dispatch(argv)
+            _dispatch(argv)
         except SystemExit:
             continue
 
@@ -487,18 +412,8 @@ def _dispatch(argv: list[str]) -> None:
 
     command = argv[0]
     if command == "fetch":
-        fetch_raw = argv[1:]
-        if any(flag in fetch_raw for flag in ("-h", "--help")):
-            info_mode = "--info" in fetch_raw
-            media_mode = "--media" in fetch_raw
-            if info_mode and not media_mode:
-                scraper.main(["--help"], prog="jav fetch --info")
-                return
-            if media_mode and not info_mode:
-                media.main(["--help"], prog="jav fetch --media")
-                return
         fetch_parser = _build_fetch_parser()
-        fetch_args = fetch_parser.parse_args(fetch_raw)
+        fetch_args = fetch_parser.parse_args(argv[1:])
         _run_fetch(fetch_args)
         return
     if command == "db":
@@ -516,11 +431,18 @@ def _dispatch(argv: list[str]) -> None:
 def main() -> None:
     argv = list(sys.argv[1:])
 
-    if not argv:
-        _run_interactive_shell()
-        return
+    if argv:
+        if argv[0] in {"-h", "--help"}:
+            _build_root_parser().print_help()
+            print("")
+            print("Direct subcommand execution is disabled.")
+            print("Start the REPL with: uv run jav")
+            raise SystemExit(0)
+        print("Direct subcommand execution is disabled.")
+        print("Use: uv run jav")
+        raise SystemExit(2)
 
-    _dispatch(argv)
+    _run_interactive_shell()
 
 
 if __name__ == "__main__":
