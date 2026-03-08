@@ -7,7 +7,7 @@ Usage:
     jav fetch --media MISM-410
     jav fetch --media MISM-410 ABW-123
     jav fetch --media --file ids.txt --no-download
-    jav fetch --media MISM-410 --video-dir /path/to/videos
+    jav fetch --media MISM-410 --media-dir ./media
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from urllib.parse import urlparse
 
 import requests
 
-from .config import BASE_URL, DELAY, LANG, MEDIA_DIR, open_db, resolve_media_root
+from .config import BASE_URL, DELAY, LANG, MEDIA_DIR, open_db
 
 
 # ── CDN allow-list ────────────────────────────────────────────────────────────
@@ -271,9 +271,10 @@ def download_media(
         ),
         None,
     )
-    preview_existing = out_dir / "preview.mp4"
-    if preview_existing.exists() and preview_existing.stat().st_size <= 500:
-        preview_existing = None
+    preview_existing_path = out_dir / "preview.mp4"
+    preview_existing = None
+    if preview_existing_path.exists() and preview_existing_path.stat().st_size > 500:
+        preview_existing = preview_existing_path
 
     session = requests.Session()
     session.headers.update({
@@ -359,15 +360,9 @@ def main(argv: list[str] | None = None, prog: str = "jav fetch --media"):
     parser.add_argument("ids", nargs="*")
     parser.add_argument("--file", "-f")
     parser.add_argument("--db", default="jav.db")
-    parser.add_argument("--no-download", action="store_true",
-                        help="Update DB with URLs only, skip downloading files")
+    parser.add_argument("--no-download", action="store_true", help="Resolve URLs only, skip downloading files")
     parser.add_argument("--media-dir")
-    parser.add_argument(
-        "--video-dir",
-        "--dir",
-        dest="video_dir",
-        help="Selected local video directory; media will be saved under <video_dir>/media",
-    )
+    parser.add_argument("--save-db", action="store_true", help="Persist scraped media URLs to SQLite")
     args = parser.parse_args(argv)
 
     ids = list(args.ids)
@@ -379,24 +374,16 @@ def main(argv: list[str] | None = None, prog: str = "jav fetch --media"):
         parser.print_help()
         sys.exit(1)
 
-    conn = open_db(args.db)
-    media_root = resolve_media_root(
-        args.db,
-        video_dir=args.video_dir,
-        explicit_media_dir=args.media_dir,
-    )
-    if not media_root:
-        conn.close()
-        print("  [ERROR] media directory not resolved.")
-        print("  Use --video-dir <path> or run `jav serve` and select a video directory first.")
-        sys.exit(2)
+    conn = open_db(args.db) if args.save_db else None
+    media_root = Path(args.media_dir).expanduser().resolve() if args.media_dir else MEDIA_DIR.resolve()
     media_root.mkdir(parents=True, exist_ok=True)
 
     for jav_id in ids:
         print(f"\n{'─'*50}\n{jav_id}")
         try:
             results = scrape_media_urls(jav_id)
-            save_media_urls(conn, jav_id, results)
+            if conn:
+                save_media_urls(conn, jav_id, results)
             if not args.no_download:
                 download_media(jav_id, results, media_root, overwrite_existing=True)
         except Exception as e:
@@ -404,7 +391,8 @@ def main(argv: list[str] | None = None, prog: str = "jav fetch --media"):
             import traceback; traceback.print_exc()
         time.sleep(DELAY)
 
-    conn.close()
+    if conn:
+        conn.close()
     print("\n✓ Done")
 
 

@@ -14,7 +14,7 @@ from ..config import MEDIA_DIR, get_setting, open_db, resolve_media_root, set_se
 from .dialogs import choose_directory_dialog
 from .pages import ALL_TITLES_HTML, ORGANIZE_HTML, VIDEO_HTML, VIEW_HTML, WATCH_HTML
 from .processor import process_queue
-from .scanner import scan_video_files
+from .scanner import scan_media_files, scan_video_files
 from .state import AppState
 
 
@@ -67,6 +67,31 @@ def _actress_display_name(primary: str, aliases_json: str | None) -> str:
     if not aliases:
         return primary
     return f"{primary} ({' / '.join(aliases)})"
+
+
+def _rescan_selected_dir(state: AppState, folder: Path, *, reset_logs: bool = True) -> int:
+    media_dir = (folder / "media").resolve()
+    media_dir.mkdir(parents=True, exist_ok=True)
+    items = scan_video_files(folder)
+    media_map = scan_media_files(media_dir)
+    video_index: dict[str, str] = {}
+    for item in items:
+        jav_id = item["jav_id"]
+        status = media_map.get(jav_id, {})
+        item["has_poster_local"] = bool(status.get("has_poster_local"))
+        item["has_preview_local"] = bool(status.get("has_preview_local"))
+        video_index[jav_id] = item["file_path"]
+    with state.lock:
+        state.selected_dir = folder
+        state.media_dir = media_dir
+        state.items = items
+        state.video_index = video_index
+        state.processed = 0
+        state.total = len(items)
+        state.current = None
+        if reset_logs:
+            state.logs = []
+    return len(items)
 
 
 class AppHandler(BaseHTTPRequestHandler):
@@ -291,10 +316,17 @@ class AppHandler(BaseHTTPRequestHandler):
         return [item for _, item in ranked[:limit]]
 
     def _load_videos(self) -> list[dict]:
+        scanned = {item["jav_id"]: item for item in self.state.items}
+        if not scanned:
+            return []
+
         conn = open_db(self.state.db_path)
         try:
-            rows = conn.execute("""
-                SELECT v.id, v.jav_id, v.title, v.release_date, v.publisher, v.local_video_path,
+            jav_ids = sorted(scanned.keys())
+            placeholders = ",".join("?" for _ in jav_ids)
+            rows = conn.execute(
+                f"""
+                SELECT v.id, v.jav_id, v.title, v.release_date, v.publisher,
                        v.poster_url, v.preview_mp4_url, v.rating, v.duration_min,
                        GROUP_CONCAT(DISTINCT g.name) AS genres,
                        wp.position_sec AS progress_sec,
@@ -306,20 +338,24 @@ class AppHandler(BaseHTTPRequestHandler):
                 LEFT JOIN video_genres vg ON vg.video_id = v.id
                 LEFT JOIN genres g ON g.id = vg.genre_id
                 LEFT JOIN watch_progress wp ON wp.jav_id = v.jav_id
-                WHERE v.local_video_path IS NOT NULL
+                WHERE v.jav_id IN ({placeholders})
                 GROUP BY v.id
                 ORDER BY v.release_date DESC, v.jav_id DESC
-            """).fetchall()
+                """,
+                tuple(jav_ids),
+            ).fetchall()
+            rows_by_jav_id = {row["jav_id"]: row for row in rows}
+
             video_ids = [row["id"] for row in rows]
             actresses_by_video_id: dict[int, list[str]] = {}
             if video_ids:
-                placeholders = ",".join("?" for _ in video_ids)
+                actress_placeholders = ",".join("?" for _ in video_ids)
                 actress_rows = conn.execute(
                     f"""
                     SELECT va.video_id, a.name, a.aliases_json
                     FROM video_actresses va
                     JOIN actresses a ON a.id = va.actress_id
-                    WHERE va.video_id IN ({placeholders})
+                    WHERE va.video_id IN ({actress_placeholders})
                     ORDER BY va.video_id, a.name
                     """,
                     tuple(video_ids),
@@ -330,38 +366,55 @@ class AppHandler(BaseHTTPRequestHandler):
                         actress_row["aliases_json"],
                     )
                     actresses_by_video_id.setdefault(actress_row["video_id"], []).append(display)
+
             out: list[dict] = []
-            for row in rows:
-                media_dir = self.state.media_dir / row["jav_id"]
-                poster_local = _first_existing([
-                    media_dir / "poster.jpg",
-                    media_dir / "poster.jpeg",
-                    media_dir / "poster.png",
-                    media_dir / "poster.webp",
-                ])
-                preview_local = media_dir / "preview.mp4"
-                actresses = actresses_by_video_id.get(row["id"], [])
-                genres = [x.strip() for x in (row["genres"] or "").split(",") if x.strip()]
-                item = {
-                    "jav_id": row["jav_id"],
-                    "title": row["title"],
-                    "release_date": row["release_date"],
-                    "publisher": row["publisher"],
-                    "rating": row["rating"],
-                    "duration_min": row["duration_min"],
-                    "actresses": actresses,
-                    "genres": genres,
-                    "has_local_video": bool(row["local_video_path"]),
-                    "poster_url": f"/api/poster?id={quote(row['jav_id'])}",
-                    "preview_url": f"/api/preview?id={quote(row['jav_id'])}",
-                    "has_poster_local": bool(poster_local),
-                    "has_preview_local": preview_local.exists(),
-                    "progress_sec": _to_float(row["progress_sec"], default=0.0),
-                    "progress_duration_sec": _to_float(row["progress_duration_sec"], default=0.0),
-                    "progress_percent": _to_float(row["progress_percent"], default=0.0),
-                    "watch_state": row["watch_state"] or None,
-                    "progress_updated_at": row["progress_updated_at"],
-                }
+            for jav_id in jav_ids:
+                scanned_item = scanned[jav_id]
+                row = rows_by_jav_id.get(jav_id)
+                if row:
+                    actresses = actresses_by_video_id.get(row["id"], [])
+                    genres = [x.strip() for x in (row["genres"] or "").split(",") if x.strip()]
+                    item = {
+                        "jav_id": jav_id,
+                        "title": row["title"],
+                        "release_date": row["release_date"],
+                        "publisher": row["publisher"],
+                        "rating": row["rating"],
+                        "duration_min": row["duration_min"],
+                        "actresses": actresses,
+                        "genres": genres,
+                        "has_local_video": True,
+                        "poster_url": f"/api/poster?id={quote(jav_id)}",
+                        "preview_url": f"/api/preview?id={quote(jav_id)}",
+                        "has_poster_local": bool(scanned_item.get("has_poster_local")),
+                        "has_preview_local": bool(scanned_item.get("has_preview_local")),
+                        "progress_sec": _to_float(row["progress_sec"], default=0.0),
+                        "progress_duration_sec": _to_float(row["progress_duration_sec"], default=0.0),
+                        "progress_percent": _to_float(row["progress_percent"], default=0.0),
+                        "watch_state": row["watch_state"] or None,
+                        "progress_updated_at": row["progress_updated_at"],
+                    }
+                else:
+                    item = {
+                        "jav_id": jav_id,
+                        "title": None,
+                        "release_date": None,
+                        "publisher": None,
+                        "rating": None,
+                        "duration_min": None,
+                        "actresses": [],
+                        "genres": [],
+                        "has_local_video": True,
+                        "poster_url": f"/api/poster?id={quote(jav_id)}",
+                        "preview_url": f"/api/preview?id={quote(jav_id)}",
+                        "has_poster_local": bool(scanned_item.get("has_poster_local")),
+                        "has_preview_local": bool(scanned_item.get("has_preview_local")),
+                        "progress_sec": 0.0,
+                        "progress_duration_sec": 0.0,
+                        "progress_percent": 0.0,
+                        "watch_state": None,
+                        "progress_updated_at": None,
+                    }
                 item["recommendation_score"] = self._recommendation_score(item)
                 out.append(item)
             return out
@@ -427,7 +480,7 @@ class AppHandler(BaseHTTPRequestHandler):
                            v.cover_url, v.page_url, v.publisher, v.label, v.series,
                            v.director, v.rating, v.poster_url, v.preview_gif_url,
                            v.preview_mp4_url, v.screenshots_json, v.fetched_at,
-                           v.local_video_path, wp.position_sec, wp.duration_sec,
+                           wp.position_sec, wp.duration_sec,
                            wp.percent, wp.state, wp.updated_at,
                            GROUP_CONCAT(DISTINCT g.name) AS genres
                     FROM videos v
@@ -483,7 +536,7 @@ class AppHandler(BaseHTTPRequestHandler):
                     "series": row["series"],
                     "director": row["director"],
                     "rating": row["rating"],
-                    "has_local_video": bool(row["local_video_path"]),
+                    "has_local_video": jav_id in self.state.video_index,
                     "poster_url": f"/api/poster?id={quote(row['jav_id'])}",
                     "preview_url": f"/api/preview?id={quote(row['jav_id'])}",
                     "preview_gif_url": row["preview_gif_url"],
@@ -608,19 +661,12 @@ class AppHandler(BaseHTTPRequestHandler):
                 self.send_error(400, "missing id")
                 return
 
-            conn = open_db(self.state.db_path)
-            try:
-                row = conn.execute(
-                    "SELECT local_video_path FROM videos WHERE jav_id=?",
-                    (jav_id,),
-                ).fetchone()
-            finally:
-                conn.close()
-            if not row or not row["local_video_path"]:
+            local_path = self.state.video_index.get(jav_id)
+            if not local_path:
                 self.send_error(404, "local video not found")
                 return
 
-            video_path = Path(row["local_video_path"])
+            video_path = Path(local_path)
             if not self.state.selected_dir or not self._safe_under(video_path, self.state.selected_dir):
                 self.send_error(403, "video path outside selected directory")
                 return
@@ -658,26 +704,20 @@ class AppHandler(BaseHTTPRequestHandler):
                 self._json({"ok": False, "error": "invalid directory"}, 400)
                 return
 
-            items = scan_video_files(folder)
-            with self.state.lock:
-                self.state.selected_dir = folder
-                self.state.media_dir = (folder / "media").resolve()
-                self.state.media_dir.mkdir(parents=True, exist_ok=True)
-                self.state.items = items
-                self.state.processed = 0
-                self.state.total = len(items)
-                self.state.current = None
-                self.state.logs = []
+            count = _rescan_selected_dir(self.state, folder)
             conn = open_db(self.state.db_path)
             try:
                 set_setting(conn, "last_video_dir", str(folder))
             finally:
                 conn.close()
-            self.state.add_log(f"[SCAN] {len(items)} file(s) with JAV IDs in {folder}")
-            self._json({"ok": True, "selected_dir": str(folder), "count": len(items)})
+            self.state.add_log(f"[SCAN] {count} file(s) with JAV IDs in {folder}")
+            self._json({"ok": True, "selected_dir": str(folder), "count": count})
             return
 
         if path == "/api/process":
+            if self.state.selected_dir:
+                count = _rescan_selected_dir(self.state, self.state.selected_dir, reset_logs=False)
+                self.state.add_log(f"[SCAN] refreshed {count} file(s) before processing")
             with self.state.lock:
                 if self.state.processing:
                     self._json({"ok": False, "error": "processing already running"}, 400)
@@ -742,6 +782,11 @@ def main(argv: list[str] | None = None, prog: str = "jav serve"):
     )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument(
+        "--force-override",
+        action="store_true",
+        help="Force refresh metadata/media and overwrite existing local media files",
+    )
     args = parser.parse_args(argv)
 
     initial_media_dir = resolve_media_root(
@@ -753,6 +798,7 @@ def main(argv: list[str] | None = None, prog: str = "jav serve"):
     state = AppState(
         db_path=Path(args.db),
         media_dir=initial_media_dir,
+        force_override=args.force_override,
     )
     start_dir: Path | None = None
     if args.video_dir:
@@ -778,12 +824,8 @@ def main(argv: list[str] | None = None, prog: str = "jav serve"):
                 start_dir = candidate
 
     if start_dir:
-        state.media_dir = (start_dir / "media").resolve()
-        state.media_dir.mkdir(parents=True, exist_ok=True)
-        state.selected_dir = start_dir
-        state.items = scan_video_files(start_dir)
-        state.total = len(state.items)
-        state.add_log(f"[SCAN] {len(state.items)} file(s) with JAV IDs in {start_dir}")
+        count = _rescan_selected_dir(state, start_dir)
+        state.add_log(f"[SCAN] {count} file(s) with JAV IDs in {start_dir}")
         conn = open_db(state.db_path)
         try:
             set_setting(conn, "last_video_dir", str(start_dir))
@@ -795,6 +837,7 @@ def main(argv: list[str] | None = None, prog: str = "jav serve"):
     print(f"  [WEB] http://{args.host}:{args.port}")
     print(f"  [DB]  {state.db_path}")
     print(f"  [MEDIA] {state.media_dir}")
+    print(f"  [FORCE] {state.force_override}")
     if state.selected_dir:
         print(f"  [VIDEO] {state.selected_dir}")
     print("  Press Ctrl+C to stop.")

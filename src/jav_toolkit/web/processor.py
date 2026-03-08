@@ -29,7 +29,7 @@ def process_queue(state: AppState):
                     "SELECT 1 FROM videos WHERE jav_id=?",
                     (jav_id,),
                 ).fetchone()
-                if existing:
+                if existing and not state.force_override:
                     state.add_log(f"[DB] {jav_id} found in sqlite, skip metadata fetch")
                 else:
                     url = search_id(jav_id)
@@ -43,11 +43,6 @@ def process_queue(state: AppState):
                         continue
 
                     upsert_video(conn, data)
-                conn.execute(
-                    "UPDATE videos SET local_video_path=? WHERE jav_id=?",
-                    (item["file_path"], jav_id),
-                )
-                conn.commit()
 
                 media_row = conn.execute(
                     "SELECT poster_url, preview_mp4_url FROM videos WHERE jav_id=?",
@@ -56,7 +51,10 @@ def process_queue(state: AppState):
                 has_media_urls = bool(
                     media_row and (media_row["poster_url"] or media_row["preview_mp4_url"])
                 )
-                if has_media_urls:
+                has_local_media = bool(
+                    item.get("has_poster_local") or item.get("has_preview_local")
+                )
+                if has_media_urls and not state.force_override:
                     media = {
                         "poster": media_row["poster_url"],
                         "preview_mp4": media_row["preview_mp4_url"],
@@ -65,7 +63,17 @@ def process_queue(state: AppState):
                 else:
                     media = scrape_media_urls(jav_id)
                 save_media_urls(conn, jav_id, media)
-                download_media(jav_id, media, state.media_dir)
+                if has_local_media and not state.force_override:
+                    state.add_log(f"[MEDIA] {jav_id} local media found, skip download")
+                else:
+                    saved = download_media(
+                        jav_id,
+                        media,
+                        state.media_dir,
+                        overwrite_existing=state.force_override,
+                    )
+                    item["has_poster_local"] = bool(saved.get("poster"))
+                    item["has_preview_local"] = bool(saved.get("preview_mp4"))
                 state.add_log(f"[OK] {jav_id}")
             except Exception as e:
                 state.add_log(f"[ERROR] {jav_id} {e}")
