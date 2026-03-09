@@ -1,11 +1,11 @@
 """
-jav fetch --info — scrape metadata from missav.ws (Traditional Chinese) into SQLite.
+jav fetch — scrape metadata from missav.ws (Traditional Chinese) into SQLite.
 Uses Playwright (real browser) to bypass Cloudflare on both search and detail pages.
 
 Usage:
-    jav fetch --info MISM-410
-    jav fetch --info MISM-410 ABW-123 SSIS-456
-    jav fetch --info --file ids.txt
+    jav fetch MISM-410
+    jav fetch MISM-410 ABW-123 SSIS-456
+    jav fetch --file ids.txt
 """
 
 from __future__ import annotations
@@ -387,7 +387,7 @@ def upsert_video(conn, data: dict) -> int:
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
-def main(argv: list[str] | None = None, prog: str = "jav fetch --info"):
+def main(argv: list[str] | None = None, prog: str = "jav fetch"):
     parser = argparse.ArgumentParser(
         prog=prog,
         description="Fetch JAV metadata from missav.ws → SQLite",
@@ -395,6 +395,12 @@ def main(argv: list[str] | None = None, prog: str = "jav fetch --info"):
     parser.add_argument("ids", nargs="*", help="JAV IDs  e.g. MISM-410")
     parser.add_argument("--file", "-f", help="Text file with one ID per line")
     parser.add_argument("--db", default="jav.db")
+    parser.add_argument(
+        "--save-db",
+        choices=("ask", "yes", "no"),
+        default="no",
+        help="DB write mode: no (default), yes (always), ask (interactive)",
+    )
     args = parser.parse_args(argv)
 
     ids = list(args.ids)
@@ -407,6 +413,8 @@ def main(argv: list[str] | None = None, prog: str = "jav fetch --info"):
         sys.exit(1)
 
     conn = open_db(args.db)
+
+    save_mode = args.save_db
 
     for jav_id in ids:
         print(f"\n{'─'*50}\n{jav_id}")
@@ -439,9 +447,23 @@ def main(argv: list[str] | None = None, prog: str = "jav fetch --info"):
         print(f"    rating      : {data.get('rating') if data.get('rating') is not None else '—'}")
 
         save = False
-        if sys.stdin.isatty():
-            answer = input("  Save fetched info to DB? [y/N]: ").strip().lower()
-            save = answer in {"y", "yes"}
+        if save_mode == "yes":
+            save = True
+        elif save_mode == "no":
+            save = False
+            print("  [INFO] save mode=no: skipping DB write.")
+        elif sys.stdin.isatty():
+            answer = input("  Save fetched info to DB? [y/N/ya/na]: ").strip().lower()
+            if answer in {"ya", "yes all"}:
+                save_mode = "yes"
+                save = True
+                print("  [INFO] save mode=yes for all remaining IDs.")
+            elif answer in {"na", "no all"}:
+                save_mode = "no"
+                save = False
+                print("  [INFO] save mode=no for all remaining IDs.")
+            else:
+                save = answer in {"y", "yes"}
         else:
             print("  [INFO] non-interactive mode: defaulting to not save.")
         if save:
