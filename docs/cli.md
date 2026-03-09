@@ -10,7 +10,7 @@ uv run jav
 Shell capabilities:
 - direct commands: `fetch ...`, `db ...`, `serve ...`
 - natural prompts: `get metadata for MISM-410`, `download media for ABW-123`
-- slash commands: `/help`, `/quit`
+- slash commands: `/help`, `/clear`, `/quit`
 
 Natural-language routing examples:
 - `MISM-410` → `jav fetch MISM-410` (info + media)
