@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import argparse
+import re
+import shlex
 import sys
 from pathlib import Path
 
 from . import db, media, scraper
 from .web import server
+
+_ID_RE = re.compile(r"\b([A-Za-z]{2,10})[-_]?(\d{2,6})\b")
 
 
 def _build_root_parser() -> argparse.ArgumentParser:
@@ -37,7 +41,11 @@ def _build_fetch_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="When running media step, resolve URLs only",
     )
-    parser.add_argument("--save-db", action="store_true", help="When running media step, save media URLs to DB")
+    parser.add_argument(
+        "--save-db",
+        action="store_true",
+        help="When running media step, save media URLs to DB",
+    )
     parser.add_argument(
         "--media-dir",
         help="Override media output directory (default: ./media in repository root)",
@@ -77,63 +85,153 @@ def _run_fetch(args: argparse.Namespace) -> None:
         media.main(media_argv, prog="jav fetch --media")
 
 
-def _prompt_fetch_mode() -> list[str] | None:
-    print("Fetch modes:")
-    print("  uv run jav fetch --info")
-    print("  uv run jav fetch --media")
-    print("  (no flag runs both: info then media)")
-    print("  1) --info")
-    print("  2) --media")
-    print("  3) both")
-    print("  q) back")
-    choice = input("Select [1-3/q]: ").strip().lower()
-    if choice == "q":
-        return None
-    if choice == "1":
-        return ["--info"]
-    if choice == "2":
-        return ["--media"]
-    if choice == "3":
-        return []
-    print("Invalid choice")
+def _extract_ids(text: str) -> list[str]:
+    found: list[str] = []
+    for prefix, number in _ID_RE.findall(text):
+        jav_id = f"{prefix.upper()}-{number}"
+        if jav_id not in found:
+            found.append(jav_id)
+    return found
+
+
+def _print_shell_help() -> None:
+    print("Interactive commands:")
+    print("  fetch --info MISM-410")
+    print("  fetch --media MISM-410 --no-download")
+    print("  fetch MISM-410 ABW-123")
+    print("  db list | db show MISM-410 | db search Emma | db stats")
+    print("  serve")
+    print("")
+    print("Natural prompts also work:")
+    print("  get metadata for MISM-410")
+    print("  download media for ABW-123 and SSIS-456")
+    print("  no-download preview for MISM-410")
+    print("")
+    print("Slash commands:")
+    print("  /help   show this help")
+    print("  /quit   exit shell")
+
+
+def _translate_nl_to_argv(raw: str) -> list[str] | None:
+    text = raw.strip()
+    lower = text.lower()
+    ids = _extract_ids(text)
+
+    if lower in {"serve", "start server", "open web", "web ui", "ui"}:
+        return ["serve"]
+
+    if lower in {"db list", "list"}:
+        return ["db", "list"]
+    if lower in {"db stats", "stats"}:
+        return ["db", "stats"]
+
+    show_match = re.search(r"\b(?:show|detail)\s+([A-Za-z]{2,10}[-_]?\d{2,6})\b", text, re.IGNORECASE)
+    if show_match:
+        extracted = _extract_ids(show_match.group(1))
+        if extracted:
+            return ["db", "show", extracted[0]]
+
+    search_match = re.search(r"\b(?:search|find)\s+(.+)$", text, re.IGNORECASE)
+    if search_match and not ids:
+        return ["db", "search", search_match.group(1).strip()]
+
+    if "export" in lower:
+        if "csv" in lower:
+            return ["db", "export", "--format", "csv"]
+        return ["db", "export", "--format", "json"]
+
+    intent_info = any(word in lower for word in ("info", "metadata", "meta", "scrape", "detail"))
+    intent_media = any(word in lower for word in ("media", "poster", "preview", "download"))
+
+    if ids and not (intent_info or intent_media):
+        intent_info = True
+        intent_media = True
+
+    if ids and (intent_info or intent_media):
+        argv = ["fetch"]
+        if intent_info and not intent_media:
+            argv.append("--info")
+        elif intent_media and not intent_info:
+            argv.append("--media")
+        if "no-download" in lower or "no download" in lower:
+            argv.append("--no-download")
+        if "save-db" in lower or "save db" in lower:
+            argv.append("--save-db")
+        argv.extend(ids)
+        return argv
+
     return None
 
 
-def _run_prompt() -> list[str] | None:
+def _parse_shell_input(raw: str) -> list[str] | None:
+    text = raw.strip()
+    if not text:
+        return None
+
+    if text.startswith("/"):
+        cmd = text[1:].strip().lower()
+        if cmd in {"quit", "exit", "q"}:
+            return ["__quit__"]
+        if cmd in {"help", "h", "?"}:
+            _print_shell_help()
+            return None
+        print(f"Unknown slash command: /{cmd}")
+        print("Try /help")
+        return None
+
+    if text.lower() in {"quit", "exit", "q"}:
+        return ["__quit__"]
+    if text.lower() in {"help", "h", "?"}:
+        _print_shell_help()
+        return None
+
+    try:
+        tokens = shlex.split(text)
+    except ValueError as err:
+        print(f"Parse error: {err}")
+        return None
+
+    if tokens and tokens[0] in {"fetch", "db", "serve"}:
+        return tokens
+
+    mapped = _translate_nl_to_argv(text)
+    if mapped:
+        print(f"[agent] -> jav {' '.join(mapped)}")
+        return mapped
+
+    print("Could not understand command.")
+    print("Try `fetch MISM-410`, `db list`, `serve`, or `/help`.")
+    return None
+
+
+def _run_interactive_shell() -> None:
     if not sys.stdin.isatty():
         print("No command provided. Use --help for usage.")
         raise SystemExit(1)
 
-    print("Choose an action:")
-    print("  1) fetch")
-    print("  2) db")
-    print("  3) serve")
-    print("  q) quit")
-    choice = input("Select [1-3/q]: ").strip().lower()
-    if choice == "q":
-        return None
-    if choice == "1":
-        fetch_mode_args = _prompt_fetch_mode()
-        if fetch_mode_args is None:
-            return None
-        return ["fetch", *fetch_mode_args]
-    if choice == "2":
-        return ["db"]
-    if choice == "3":
-        return ["serve"]
-    print("Invalid choice")
-    return None
+    print("jav interactive shell")
+    print("Type `/help` for commands, `/quit` to exit.")
 
-
-def main() -> None:
-    argv = list(sys.argv[1:])
-
-    if not argv:
-        prompted = _run_prompt()
-        if prompted is None:
+    while True:
+        try:
+            raw = input("jav> ")
+        except (EOFError, KeyboardInterrupt):
+            print("")
             return
-        argv = prompted
 
+        argv = _parse_shell_input(raw)
+        if not argv:
+            continue
+        if argv == ["__quit__"]:
+            return
+
+        try:
+            _dispatch(argv)
+        except SystemExit:
+            continue
+
+
+def _dispatch(argv: list[str]) -> None:
     root_parser = _build_root_parser()
     if argv[0] in {"-h", "--help"}:
         root_parser.parse_args(["--help"])
@@ -165,6 +263,16 @@ def main() -> None:
     print(f"jav: error: invalid command '{command}'")
     root_parser.parse_args(["--help"])
     raise SystemExit(2)
+
+
+def main() -> None:
+    argv = list(sys.argv[1:])
+
+    if not argv:
+        _run_interactive_shell()
+        return
+
+    _dispatch(argv)
 
 
 if __name__ == "__main__":
