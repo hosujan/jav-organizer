@@ -9,15 +9,11 @@ uv run jav
 
 Shell capabilities:
 - direct commands: `fetch ...`, `db ...`, `serve ...`
-- natural prompts: `get metadata for MISM-410`, `download media for ABW-123`
 - slash commands: `/help`, `/clear`, `/quit`
 - shell UX: persistent command history (`~/.jav_cli_history`) + tab autocomplete
-
-Natural-language routing examples:
-- `MISM-410` → `jav fetch MISM-410` (info + media)
-- `metadata for MISM-410` → `jav fetch --info MISM-410`
-- `no-download preview for MISM-410` → `jav fetch --media --no-download MISM-410`
-- `stats` → `jav db stats`
+- slash discovery: type `/` or `/he` to list matching slash commands
+- fuzzy correction: `fetxh` -> `fetch`, `/hep` -> `/help`
+- rich TUI (when `rich` is installed): colored panels/tables and running spinner
 
 ## `jav fetch`
 Fetch metadata and/or media.
