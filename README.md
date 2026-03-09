@@ -11,6 +11,7 @@ Local-first JAV organizer with CLI and web UI:
 - [CLI Reference](docs/cli.md)
 - [Web UI Guide](docs/web-ui.md)
 - [Architecture and Data](docs/architecture.md)
+- [Database Migrations Guide](docs/db-migrations.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [Development Guide](docs/development.md)
 
