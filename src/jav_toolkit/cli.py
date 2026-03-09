@@ -255,11 +255,10 @@ def _build_fetch_parser() -> argparse.ArgumentParser:
 
 
 def _run_fetch(args: argparse.Namespace) -> None:
-    info_argv = ["--save-db", "ask", *args.ids]
     media_argv = list(args.ids)
     media_root = Path("media").resolve()
 
-    scraper.main(info_argv, prog="jav fetch")
+    scraper.fetch_ids(args.ids, db_path="jav.db", save_mode="ask")
     media_root.mkdir(parents=True, exist_ok=True)
     media_argv += ["--media-dir", str(media_root)]
     media.main(media_argv, prog="jav fetch")

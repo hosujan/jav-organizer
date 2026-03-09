@@ -1,21 +1,13 @@
 """
-jav fetch — scrape metadata from missav.ws (Traditional Chinese) into SQLite.
-Uses Playwright (real browser) to bypass Cloudflare on both search and detail pages.
-
-Usage:
-    jav fetch MISM-410
-    jav fetch MISM-410 ABW-123 SSIS-456
-    jav fetch --file ids.txt
+Metadata scraping for REPL-driven `fetch` workflow.
 """
 
 from __future__ import annotations
-import argparse
 import json
 import re
-import sys
 import time
 from datetime import datetime
-from pathlib import Path
+from typing import Literal
 from urllib.parse import urljoin, urlparse
 
 from .config import BASE_URL, DELAY, LANG, open_db
@@ -385,38 +377,14 @@ def upsert_video(conn, data: dict) -> int:
     return vid_id
 
 
-# ── CLI ───────────────────────────────────────────────────────────────────────
+def fetch_ids(ids: list[str], db_path: str = "jav.db", save_mode: Literal["ask", "yes", "no"] = "ask") -> None:
+    normalized_ids = [i.strip().upper() for i in ids if i.strip()]
+    if not normalized_ids:
+        raise ValueError("fetch_ids requires at least one JAV ID")
 
-def main(argv: list[str] | None = None, prog: str = "jav fetch"):
-    parser = argparse.ArgumentParser(
-        prog=prog,
-        description="Fetch JAV metadata from missav.ws → SQLite",
-    )
-    parser.add_argument("ids", nargs="*", help="JAV IDs  e.g. MISM-410")
-    parser.add_argument("--file", "-f", help="Text file with one ID per line")
-    parser.add_argument("--db", default="jav.db")
-    parser.add_argument(
-        "--save-db",
-        choices=("ask", "yes", "no"),
-        default="no",
-        help="DB write mode: no (default), yes (always), ask (interactive)",
-    )
-    args = parser.parse_args(argv)
+    conn = open_db(db_path)
 
-    ids = list(args.ids)
-    if args.file:
-        ids += Path(args.file).read_text().splitlines()
-    ids = [i.strip().upper() for i in ids if i.strip()]
-
-    if not ids:
-        parser.print_help()
-        sys.exit(1)
-
-    conn = open_db(args.db)
-
-    save_mode = args.save_db
-
-    for jav_id in ids:
+    for jav_id in normalized_ids:
         print(f"\n{'─'*50}\n{jav_id}")
         url = search_id(jav_id)
         if not url:
@@ -474,8 +442,4 @@ def main(argv: list[str] | None = None, prog: str = "jav fetch"):
         time.sleep(DELAY)
 
     conn.close()
-    print(f"\n✓ Done — reviewed against {args.db}")
-
-
-if __name__ == "__main__":
-    main()
+    print(f"\n✓ Done — reviewed against {db_path}")
