@@ -2,20 +2,21 @@
 
 ## Project Structure & Module Organization
 - Core package code lives in `src/jav_toolkit/`.
-- Main CLI entry points are:
-  - `scraper.py` (`jav-fetch`) for metadata scraping.
-  - `media.py` (`jav-media`) for poster/preview/screenshot download.
-  - `db.py` (`jav-db`) for local SQLite queries and exports.
+- Main CLI entry point is `cli.py` (`jav`) with REPL commands:
+  - `fetch` for metadata + media workflow (`fetch <id>`).
+  - `db` for local SQLite queries and exports.
+  - `serve` for local web frontend.
+  - Backing modules: `scraper.py`, `media.py`, `db.py`, `web/server.py`.
   - `config.py` for shared constants (base URL, language, paths, DB helpers).
 - Runtime outputs are local-only: `media/` for downloaded assets and `*.db` (for example `jav.db`) for SQLite data.
 
 ## Build, Test, and Development Commands
 - `uv sync`: install and lock project dependencies from `pyproject.toml`/`uv.lock`.
 - `uv run playwright install chromium`: one-time browser install required by scraper/media flows.
-- `uv run jav-fetch MISM-410`: scrape and store metadata for one ID (or pass multiple IDs / `--file ids.txt`).
-- `uv run jav-media MISM-410 --no-download`: resolve media URLs without saving files.
-- `uv run jav-db list` / `uv run jav-db show MISM-410`: inspect stored records.
-- `uv run jav-db export --format json`: export local DB snapshots.
+- `uv run jav`: start REPL shell (required launch mode).
+- `fetch MISM-410`: scrape metadata and download media for one ID.
+- `db list` / `db show MISM-410`: inspect stored records.
+- `db export --format json`: export local DB snapshots.
 
 ## Coding Style & Naming Conventions
 - Python 3.12+, 4-space indentation, and type hints for public functions.
