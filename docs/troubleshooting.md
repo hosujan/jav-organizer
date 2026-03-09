@@ -15,11 +15,11 @@ uv run playwright install chromium
 - Retry later or verify manually.
 
 ## Port Already In Use
-```bash
-uv run jav serve --port 8877
+```text
+jav> serve --port 8877
 ```
 
 ## Separate Data Environments
-```bash
-uv run jav serve --db ./data/dev.db --video-dir /path/to/dev/videos
+```text
+jav> serve --db ./data/dev.db --video-dir /path/to/dev/videos
 ```

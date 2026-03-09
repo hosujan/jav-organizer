@@ -1,65 +1,36 @@
 # CLI Reference
 
 ## `jav`
-Run without arguments to launch an interactive shell.
+Run without arguments to launch an interactive shell. This is the only supported launch mode.
 
 ```bash
 uv run jav
 ```
 
 Shell capabilities:
-- direct commands: `fetch ...`, `db ...`, `serve ...`
+- exact commands only: `fetch <id> [id2 ...]`, `db ...`, `serve ...`
 - slash commands: `/help`, `/clear`, `/quit`
 - shell UX: persistent command history (`~/.jav_cli_history`) + tab autocomplete
 - live slash discovery: typing `/` immediately shows slash commands below the prompt
-- fuzzy correction: `fetxh` -> `fetch`, `/hep` -> `/help`
-- rich TUI (when `rich` is installed): colored panels/tables and running spinner
+- rich TUI (when `rich` is installed): colored panels/tables
 
-## `jav fetch`
-Fetch metadata and/or media.
+## Command Examples (inside REPL)
+Run `uv run jav`, then use shell commands like:
 
-```bash
-uv run jav fetch MISM-410
-uv run jav fetch --info MISM-410
-uv run jav fetch --media MISM-410
-uv run jav fetch --media --file ids.txt
-uv run jav fetch --media --no-download MISM-410
-uv run jav fetch --media --save-db MISM-410
-uv run jav fetch --media --media-dir /custom/path/media MISM-410
-uv run jav fetch --info --help
-uv run jav fetch --media --help
-uv run jav fetch --help
+```text
+jav> fetch MISM-410
+jav> fetch MISM-410 ABW-123
+jav> db search MISM-410
+jav> db list
+jav> serve
+jav> /help
 ```
 
 Notes:
-- `uv run jav fetch --info` fetches and compares with DB, then asks whether to save (default: `No`).
-- `uv run jav fetch --media` saves files to repo-root `./media` by default and does not save URLs to DB unless `--save-db` is passed.
-- `uv run jav fetch` runs info then media with the same non-persistent defaults.
-
-## `jav db`
-Inspect and export local database records.
-
-```bash
-uv run jav db --db jav.db list
-uv run jav db --db jav.db show MISM-410
-uv run jav db --db jav.db search "MISM"
-uv run jav db --db jav.db stats
-uv run jav db --db jav.db export --format json
-uv run jav db --db jav.db export --format csv
-uv run jav db --help
-```
-
-## `jav serve`
-Run local scanner/processor/player frontend.
-
-```bash
-uv run jav serve
-uv run jav serve --video-dir /path/to/local/videos
-uv run jav serve --dir /path/to/local/videos
-uv run jav serve --host 127.0.0.1 --port 8765
-uv run jav serve --force-override
-uv run jav serve --help
-```
+- `fetch <id>` always runs metadata first, then media download, for each ID.
+- `fetch` does not accept `--info` or `--media`.
+- REPL `fetch` prompts whether to save metadata to DB after metadata is fetched.
+- `db ...` commands are forwarded as-is to the DB CLI parser.
 
 Note:
 - `serve` always rescans the selected source folder and keeps video paths in memory only.
