@@ -13,12 +13,41 @@ from . import db, media, scraper
 from .web import server
 
 _ID_RE = re.compile(r"\b([A-Za-z]{2,10})[-_]?(\d{2,6})\b")
+_HISTORY_FILE = Path.home() / ".jav_cli_history"
+_REPL_TOKENS = sorted(
+    {
+        "fetch",
+        "db",
+        "serve",
+        "--info",
+        "--media",
+        "--file",
+        "--db",
+        "--no-download",
+        "--save-db",
+        "--media-dir",
+        "list",
+        "show",
+        "search",
+        "stats",
+        "export",
+        "--format",
+        "json",
+        "csv",
+        "/help",
+        "/clear",
+        "/quit",
+        "help",
+        "clear",
+        "quit",
+    }
+)
 _BANNER = r"""
-     __      ___     __      ________    __    ____
-    / /___ _/ / |   / /     / ____/ /   / /   /  _/
-   / / __ `/ /| |  / /_____/ /   / /   / /    / /
-  / / /_/ / / | | / /_____/ /___/ /___/ /____/ /
- /_/\__,_/_/  |_|/_/      \____/_____/_____/___/
+       __               ________    ____
+      / /___ __   __   / ____/ /   /  _/
+ __  / / __ `/ | / /  / /   / /    / /
+/ /_/ / /_/ /| |/ /  / /___/ /____/ /
+\____/\__,_/ |___/   \____/_____/___/
 """
 
 
@@ -29,6 +58,50 @@ def _clear_screen() -> None:
 def _print_banner() -> None:
     print(_BANNER)
     print("Type `/help` for commands, `/quit` to exit.")
+
+
+def _setup_readline() -> None:
+    try:
+        import atexit
+        import readline  # type: ignore[import-not-found]
+    except Exception:
+        return
+
+    def complete(text: str, state: int) -> str | None:
+        buffer = readline.get_line_buffer()
+        begidx = readline.get_begidx()
+        prefix = buffer[:begidx]
+        at_cmd_start = not prefix.strip()
+        candidates = _REPL_TOKENS
+
+        # Favor slash commands when user starts with slash.
+        if text.startswith("/"):
+            candidates = [token for token in _REPL_TOKENS if token.startswith("/")]
+        elif at_cmd_start:
+            candidates = [token for token in ("fetch", "db", "serve", "/help", "/clear", "/quit")]
+
+        matches = [token for token in candidates if token.startswith(text)]
+        return matches[state] if state < len(matches) else None
+
+    try:
+        readline.read_history_file(str(_HISTORY_FILE))
+    except FileNotFoundError:
+        pass
+    except Exception:
+        # Keep REPL functional even if history cannot be loaded.
+        pass
+
+    readline.set_completer(complete)
+    readline.parse_and_bind("tab: complete")
+    readline.set_history_length(1000)
+
+    def _save_history() -> None:
+        try:
+            readline.write_history_file(str(_HISTORY_FILE))
+        except Exception:
+            pass
+
+    atexit.register(_save_history)
 
 
 def _build_root_parser() -> argparse.ArgumentParser:
@@ -231,6 +304,7 @@ def _run_interactive_shell() -> None:
         print("No command provided. Use --help for usage.")
         raise SystemExit(1)
 
+    _setup_readline()
     _clear_screen()
     _print_banner()
 
