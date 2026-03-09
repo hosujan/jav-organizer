@@ -48,13 +48,12 @@ def process_queue(state: AppState):
                     "SELECT poster_url, preview_mp4_url FROM videos WHERE jav_id=?",
                     (jav_id,),
                 ).fetchone()
-                has_media_urls = bool(
-                    media_row and (media_row["poster_url"] or media_row["preview_mp4_url"])
-                )
-                has_local_media = bool(
-                    item.get("has_poster_local") or item.get("has_preview_local")
-                )
-                if has_media_urls and not state.force_override:
+                has_db_poster = bool(media_row and media_row["poster_url"])
+                has_db_preview = bool(media_row and media_row["preview_mp4_url"])
+                has_local_poster = bool(item.get("has_poster_local"))
+                has_local_preview = bool(item.get("has_preview_local"))
+
+                if has_db_poster and has_db_preview and not state.force_override:
                     media = {
                         "poster": media_row["poster_url"],
                         "preview_mp4": media_row["preview_mp4_url"],
@@ -63,8 +62,8 @@ def process_queue(state: AppState):
                 else:
                     media = scrape_media_urls(jav_id)
                 save_media_urls(conn, jav_id, media)
-                if has_local_media and not state.force_override:
-                    state.add_log(f"[MEDIA] {jav_id} local media found, skip download")
+                if has_local_poster and has_local_preview and not state.force_override:
+                    state.add_log(f"[MEDIA] {jav_id} local poster+preview found, skip download")
                 else:
                     saved = download_media(
                         jav_id,
@@ -72,8 +71,8 @@ def process_queue(state: AppState):
                         state.media_dir,
                         overwrite_existing=state.force_override,
                     )
-                    item["has_poster_local"] = bool(saved.get("poster"))
-                    item["has_preview_local"] = bool(saved.get("preview_mp4"))
+                    item["has_poster_local"] = bool(saved.get("poster")) or has_local_poster
+                    item["has_preview_local"] = bool(saved.get("preview_mp4")) or has_local_preview
                 state.add_log(f"[OK] {jav_id}")
             except Exception as e:
                 state.add_log(f"[ERROR] {jav_id} {e}")
