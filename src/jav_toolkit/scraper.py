@@ -5,6 +5,7 @@ Metadata scraping for REPL-driven `fetch` workflow.
 from __future__ import annotations
 import json
 import re
+import sys
 import time
 from datetime import datetime
 from typing import Literal
@@ -421,7 +422,7 @@ def fetch_ids(ids: list[str], db_path: str = "jav.db", save_mode: Literal["ask",
             save = False
             print("  [INFO] save mode=no: skipping DB write.")
         elif sys.stdin.isatty():
-            answer = input("  Save fetched info to DB? [y/N/ya/na]: ").strip().lower()
+            answer = input("  Save fetched info to DB? [Y/n/ya/na]: ").strip().lower()
             if answer in {"ya", "yes all"}:
                 save_mode = "yes"
                 save = True
@@ -430,8 +431,10 @@ def fetch_ids(ids: list[str], db_path: str = "jav.db", save_mode: Literal["ask",
                 save_mode = "no"
                 save = False
                 print("  [INFO] save mode=no for all remaining IDs.")
+            elif answer in {"", "y", "yes"}:
+                save = True
             else:
-                save = answer in {"y", "yes"}
+                save = False
         else:
             print("  [INFO] non-interactive mode: defaulting to not save.")
         if save:
