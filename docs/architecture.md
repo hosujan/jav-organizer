@@ -10,7 +10,7 @@
 
 ## Storage
 - Database: `jav.db` by default.
-- `jav fetch --media` default media root: repo `./media`.
+- `fetch <id>` default media root: repo `./media`.
 - `jav serve` media root: `<selected_video_dir>/media` (auto-created).
 
 Media structure:
