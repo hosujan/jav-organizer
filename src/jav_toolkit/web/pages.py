@@ -292,7 +292,7 @@ def _layout(title: str, active: str, content: str, script: str = "") -> str:
     }}
     .form-grid {{
       display: grid;
-      grid-template-columns: minmax(240px, 1fr) auto auto auto;
+      grid-template-columns: minmax(240px, 1fr) auto auto auto auto;
       gap: 8px;
       align-items: center;
     }}
@@ -400,6 +400,10 @@ ORGANIZE_HTML = _layout(
       <input id="manualPath" type="text" placeholder="Fallback: enter local path" style="min-width:320px; flex:1;" />
       <button id="chooseBtn">Choose Local Directory</button>
       <button id="manualBtn">Use Path</button>
+      <label style="display:flex; gap:8px; align-items:center; font-size:13px; color:var(--muted);">
+        <input id="forceFetch" type="checkbox" style="width:16px; height:16px; padding:0;" />
+        Force fetch all info + media
+      </label>
       <button id="processBtn" class="primary">Start Processing</button>
     </div>
     <p id="status" class="hint" style="margin:10px 0 0;"></p>
@@ -444,6 +448,7 @@ ORGANIZE_HTML = _layout(
     const processBtn = document.getElementById("processBtn");
     const manualBtn = document.getElementById("manualBtn");
     const manualPath = document.getElementById("manualPath");
+    const forceFetch = document.getElementById("forceFetch");
     const historyBody = document.getElementById("historyBody");
     const catalogCount = document.getElementById("catalogCount");
 
@@ -516,7 +521,7 @@ ORGANIZE_HTML = _layout(
 
     async function startProcess() {
       try {
-        await post("/api/process", {});
+        await post("/api/process", {force_override: Boolean(forceFetch.checked)});
         statusEl.textContent = "Processing started.";
       } catch (e) {
         statusEl.textContent = "Start failed: " + e.message;
@@ -529,6 +534,7 @@ ORGANIZE_HTML = _layout(
         manualPath.value = state.selected_dir;
         statusEl.textContent = "Selected: " + state.selected_dir + " (" + state.total + " matched videos)";
       }
+      forceFetch.checked = Boolean(state.force_override);
       const current = state.current ? " current: " + state.current : "";
       progressEl.textContent = state.processed + " / " + state.total + (state.processing ? " (running)" : " (idle)") + current;
       renderLogs(state.logs || []);

@@ -20,7 +20,15 @@ from urllib.parse import urlparse
 
 import requests
 
-from .config import BASE_URL, DELAY, LANG, MEDIA_DIR, open_db
+from .config import (
+    BASE_URL,
+    BROWSER_HEADLESS,
+    BROWSER_PROFILE_DIR,
+    DELAY,
+    LANG,
+    MEDIA_DIR,
+    open_db,
+)
 
 
 # ── CDN allow-list ────────────────────────────────────────────────────────────
@@ -42,6 +50,8 @@ AD_DOMAINS = {
     "affiliate", "banner", "popup",
 }
 
+MIN_VALID_BYTES = 500
+
 
 def _is_cdn_url(url: str) -> bool:
     """True only if the URL comes from a known CDN domain."""
@@ -53,7 +63,46 @@ def _is_cdn_url(url: str) -> bool:
 
 # ── Playwright browser scrape ─────────────────────────────────────────────────
 
-def scrape_media_urls(jav_id: str) -> dict:
+def _challenge_signal(page) -> str | None:
+    url = page.url.lower()
+    title = (page.title() or "").strip().lower()
+    if "cdn-cgi/challenge" in url or "challenge-platform" in url:
+        return f"url={page.url}"
+    if title in {"just a moment...", "attention required! | cloudflare", "verify you are human"}:
+        return f"title={title}"
+    selectors = (
+        "#challenge-form",
+        "#cf-challenge-running",
+        "#challenge-running",
+        "iframe[src*='challenges.cloudflare.com']",
+        "input[name='cf_ch_verify']",
+    )
+    for selector in selectors:
+        if page.query_selector(selector):
+            return f"selector={selector}"
+    return None
+
+
+def _wait_for_challenge_clear(page, *, headless: bool) -> None:
+    reason = _challenge_signal(page)
+    if not reason:
+        return
+
+    print(f"  [WARN] bot challenge detected ({reason}).")
+    if not headless and sys.stdin.isatty():
+        print("  [INFO] complete verification in the browser window (up to 120s).")
+        for _ in range(60):
+            page.wait_for_timeout(2_000)
+            if not _challenge_signal(page):
+                print("  [OK] challenge cleared.")
+                return
+        print("  [WARN] challenge still present after 120s, continuing anyway.")
+        return
+
+    page.wait_for_timeout(8_000)
+
+
+def scrape_media_urls(jav_id: str, *, headless: bool = BROWSER_HEADLESS) -> dict:
     from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 
     page_url = f"{BASE_URL}/{LANG}/{jav_id.lower()}"
@@ -62,14 +111,15 @@ def scrape_media_urls(jav_id: str) -> dict:
         "preview_mp4": None,
     }
     captured: list[str] = []
+    profile_dir = BROWSER_PROFILE_DIR.expanduser().resolve()
+    profile_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"  [BROWSER] {page_url}")
     with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=True,
+        ctx = p.chromium.launch_persistent_context(
+            user_data_dir=str(profile_dir),
+            headless=headless,
             args=["--no-sandbox", "--disable-blink-features=AutomationControlled"],
-        )
-        ctx = browser.new_context(
             user_agent=(
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -78,12 +128,16 @@ def scrape_media_urls(jav_id: str) -> dict:
             locale="zh-TW",
             extra_http_headers={"Accept-Language": "zh-TW,zh;q=0.9"},
         )
-        page = ctx.new_page()
+        ctx.add_init_script(
+            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
+        )
+        page = ctx.pages[0] if ctx.pages else ctx.new_page()
         page.on("request",  lambda req: captured.append(req.url))
         page.on("response", lambda res: captured.append(res.url))   # also catch redirects
 
         try:
             page.goto(page_url, wait_until="domcontentloaded", timeout=30_000)
+            _wait_for_challenge_clear(page, headless=headless)
             page.wait_for_timeout(4_000)   # let lazy assets load
         except PWTimeout:
             print("  [WARN] page load timed out, parsing partial content")
@@ -117,7 +171,6 @@ def scrape_media_urls(jav_id: str) -> dict:
                     pass
 
         ctx.close()
-        browser.close()
 
     # ── CDN pattern prober (fallback) ─────────────────────────────────────
     # If we found the poster URL we know the CDN base path, probe common patterns.
@@ -212,7 +265,7 @@ def _probe_cdn_patterns(jav_id: str, results: dict):
             if r.status_code == 200:
                 ct = r.headers.get("content-type", "")
                 cl = int(r.headers.get("content-length", 0))
-                if cl > 500:           # ignore near-empty responses
+                if cl > MIN_VALID_BYTES:           # ignore near-empty responses
                     return url
         except Exception:
             pass
@@ -238,6 +291,92 @@ def _log_results(jav_id: str, r: dict):
 
 # ── File downloader ───────────────────────────────────────────────────────────
 
+def local_media_paths(jav_id: str, base_dir: Path = MEDIA_DIR) -> dict[str, Path | None]:
+    out_dir = base_dir / jav_id.upper()
+    poster = next(
+        (
+            path
+            for path in (
+                out_dir / "poster.jpg",
+                out_dir / "poster.jpeg",
+                out_dir / "poster.png",
+                out_dir / "poster.webp",
+            )
+            if path.exists() and path.stat().st_size > MIN_VALID_BYTES
+        ),
+        None,
+    )
+    preview = out_dir / "preview.mp4"
+    if not preview.exists() or preview.stat().st_size <= MIN_VALID_BYTES:
+        preview = None
+    return {"poster": poster, "preview_mp4": preview}
+
+
+def fetch_media_payloads(jav_id: str, results: dict) -> dict[str, dict]:
+    payloads: dict[str, dict] = {}
+    session = requests.Session()
+    session.headers.update({
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/122.0.0.0 Safari/537.36"
+        ),
+        "Referer": f"{BASE_URL}/",
+    })
+
+    def dl(url: str, name: str, key: str) -> None:
+        if not url:
+            return
+        print(f"    [↓] {name}")
+        try:
+            response = session.get(url, timeout=60, stream=True)
+            response.raise_for_status()
+            data = b"".join(response.iter_content(65536))
+            if len(data) <= MIN_VALID_BYTES:
+                print(f"    [WARN] {name} — response too small ({len(data)} B), skipping")
+                return
+            payloads[key] = {
+                "name": name,
+                "url": url,
+                "data": data,
+                "size": len(data),
+            }
+            print(f"         {len(data) // 1024} KB  ✓")
+        except Exception as err:
+            print(f"    [ERR] {name}: {err}")
+
+    poster_url = results.get("poster")
+    if poster_url:
+        ext = Path(urlparse(poster_url).path).suffix or ".jpg"
+        dl(poster_url, f"poster{ext}", "poster")
+    preview_url = results.get("preview_mp4")
+    if preview_url:
+        dl(preview_url, "preview.mp4", "preview_mp4")
+    return payloads
+
+
+def save_media_payloads(jav_id: str, payloads: dict[str, dict], base_dir: Path = MEDIA_DIR) -> dict[str, str]:
+    saved: dict[str, str] = {}
+    out_dir = base_dir / jav_id.upper()
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    poster_payload = payloads.get("poster")
+    if poster_payload:
+        # Keep only one poster file based on latest extension.
+        for old in (out_dir / "poster.jpg", out_dir / "poster.jpeg", out_dir / "poster.png", out_dir / "poster.webp"):
+            if old.exists():
+                old.unlink()
+        poster_path = out_dir / poster_payload["name"]
+        poster_path.write_bytes(poster_payload["data"])
+        saved["poster"] = str(poster_path)
+
+    preview_payload = payloads.get("preview_mp4")
+    if preview_payload:
+        preview_path = out_dir / "preview.mp4"
+        preview_path.write_bytes(preview_payload["data"])
+        saved["preview_mp4"] = str(preview_path)
+    return saved
+
 def download_media(
     jav_id: str,
     results: dict,
@@ -258,23 +397,9 @@ def download_media(
             if path.exists():
                 path.unlink()
 
-    poster_existing = next(
-        (
-            path
-            for path in (
-                out_dir / "poster.jpg",
-                out_dir / "poster.jpeg",
-                out_dir / "poster.png",
-                out_dir / "poster.webp",
-            )
-            if path.exists() and path.stat().st_size > 500
-        ),
-        None,
-    )
-    preview_existing_path = out_dir / "preview.mp4"
-    preview_existing = None
-    if preview_existing_path.exists() and preview_existing_path.stat().st_size > 500:
-        preview_existing = preview_existing_path
+    local = local_media_paths(jav_id, base_dir)
+    poster_existing = local["poster"]
+    preview_existing = local["preview_mp4"]
 
     session = requests.Session()
     session.headers.update({
@@ -292,7 +417,7 @@ def download_media(
         dest = out_dir / name
         if overwrite_existing and dest.exists():
             dest.unlink()
-        if not overwrite_existing and dest.exists() and dest.stat().st_size > 500:
+        if not overwrite_existing and dest.exists() and dest.stat().st_size > MIN_VALID_BYTES:
             print(f"    [skip] {name} (exists)")
             return str(dest)
         try:
@@ -300,7 +425,7 @@ def download_media(
             r = session.get(url, timeout=60, stream=True)
             r.raise_for_status()
             data = b"".join(r.iter_content(65536))
-            if len(data) < 500:
+            if len(data) < MIN_VALID_BYTES:
                 print(f"    [WARN] {name} — response too small ({len(data)} B), skipping")
                 return None
             dest.write_bytes(data)
@@ -362,6 +487,7 @@ def main(argv: list[str] | None = None, prog: str = "jav fetch --media"):
     parser.add_argument("--db", default="jav.db")
     parser.add_argument("--no-download", action="store_true", help="Resolve URLs only, skip downloading files")
     parser.add_argument("--media-dir")
+    parser.add_argument("--headless", action="store_true", help="Run Playwright in headless mode")
     parser.add_argument("--save-db", action="store_true", help="Persist scraped media URLs to SQLite")
     args = parser.parse_args(argv)
 
@@ -381,7 +507,7 @@ def main(argv: list[str] | None = None, prog: str = "jav fetch --media"):
     for jav_id in ids:
         print(f"\n{'─'*50}\n{jav_id}")
         try:
-            results = scrape_media_urls(jav_id)
+            results = scrape_media_urls(jav_id, headless=args.headless)
             if conn:
                 save_media_urls(conn, jav_id, results)
             if not args.no_download:

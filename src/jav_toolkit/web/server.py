@@ -715,6 +715,7 @@ class AppHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/process":
+            force_override = bool(body.get("force_override", False))
             with self.state.lock:
                 if self.state.processing:
                     self._json({"ok": False, "error": "processing already running"}, 400)
@@ -723,6 +724,7 @@ class AppHandler(BaseHTTPRequestHandler):
                 if not selected_dir:
                     self._json({"ok": False, "error": "no selected source directory"}, 400)
                     return
+                self.state.force_override = force_override
                 # Reserve processing state before re-scan to avoid concurrent /api/process races.
                 self.state.processing = True
 
