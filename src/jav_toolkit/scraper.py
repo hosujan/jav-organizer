@@ -199,6 +199,7 @@ def fetch_detail(url: str, jav_id: str, *, headless: bool = BROWSER_HEADLESS) ->
             pass
 
     _parse_fallback(soup, data)
+    data["actresses"] = _normalize_actresses(data.get("actresses", []))
     return data
 
 
@@ -214,6 +215,27 @@ _LABEL_MAP = {
 _ACTRESS_KEYS = {"女優", "演員", "出演", "Cast"}
 _GENRE_KEYS   = {"類型", "標籤", "Tags", "Genre", "分類"}
 _ALIAS_SPLIT_RE = re.compile(r"[,/、，・;；]\s*")
+_ACTRESS_BLOCKLIST = {
+    "missav",
+    "missav.com",
+    "missav.ws",
+}
+
+
+def _is_valid_actress_name(name: str) -> bool:
+    value = str(name or "").strip()
+    if not value:
+        return False
+    return value.casefold() not in _ACTRESS_BLOCKLIST
+
+
+def _normalize_actresses(values: list[str]) -> list[str]:
+    cleaned: list[str] = []
+    for value in values:
+        if not _is_valid_actress_name(value):
+            continue
+        cleaned.append(str(value).strip())
+    return _unique_keep_order(cleaned)
 
 
 def _parse_meta_row(tag, text: str, data: dict):
@@ -410,6 +432,8 @@ def upsert_video(conn, data: dict) -> int:
     conn.execute("DELETE FROM video_genres    WHERE video_id=?", (vid_id,))
 
     for name in data.get("actresses", []):
+        if not _is_valid_actress_name(name):
+            continue
         aid = _upsert_actress(conn, name)
         conn.execute("INSERT OR IGNORE INTO video_actresses VALUES (?,?)", (vid_id, aid))
 

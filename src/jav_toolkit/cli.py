@@ -366,6 +366,44 @@ def _format_list(values: list[str]) -> str:
     return ", ".join(values)
 
 
+def _is_valid_actress_name(name: str) -> bool:
+    checker = getattr(scraper, "_is_valid_actress_name", None)
+    if callable(checker):
+        return bool(checker(name))
+    return bool(str(name or "").strip())
+
+
+def _resolve_actress_primary(conn, raw_name: str) -> str | None:
+    expander = getattr(scraper, "_expand_actress_names", None)
+    if callable(expander):
+        names = [name.strip() for name in expander(raw_name) if name and name.strip()]
+    else:
+        names = [str(raw_name or "").strip()]
+
+    names = [name for name in names if _is_valid_actress_name(name)]
+    if not names:
+        return None
+
+    finder = getattr(scraper, "_find_actress_row_by_any_name", None)
+    if callable(finder):
+        row = finder(conn, names)
+        if row:
+            return row["name"]
+    return names[0]
+
+
+def _normalize_actress_names_for_diff(conn, raw_values: list[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for value in raw_values:
+        primary = _resolve_actress_primary(conn, str(value or "").strip())
+        if not primary or primary in seen:
+            continue
+        seen.add(primary)
+        out.append(primary)
+    return sorted(out)
+
+
 def _db_video_snapshot(conn, jav_id: str) -> dict | None:
     row = conn.execute(
         """
@@ -437,7 +475,7 @@ def _diff_video_info(conn, jav_id: str, data: dict) -> list[str]:
     ]
     existing = _db_video_snapshot(conn, jav_id)
     new_lists = {
-        "actresses": sorted({str(v).strip() for v in data.get("actresses", []) if str(v).strip()}),
+        "actresses": _normalize_actress_names_for_diff(conn, data.get("actresses", [])),
         "genres": sorted({str(v).strip() for v in data.get("genres", []) if str(v).strip()}),
     }
 
@@ -459,11 +497,15 @@ def _diff_video_info(conn, jav_id: str, data: dict) -> list[str]:
         if before != after:
             diffs.append(f"{field}: {before} -> {after}")
 
-    for field in ("actresses", "genres"):
-        before = _format_list(sorted({str(v).strip() for v in existing.get(field, []) if str(v).strip()}))
-        after = _format_list(new_lists[field])
-        if before != after:
-            diffs.append(f"{field}: {before} -> {after}")
+    before_actresses = _format_list(_normalize_actress_names_for_diff(conn, existing.get("actresses", [])))
+    after_actresses = _format_list(new_lists["actresses"])
+    if before_actresses != after_actresses:
+        diffs.append(f"actresses: {before_actresses} -> {after_actresses}")
+
+    before_genres = _format_list(sorted({str(v).strip() for v in existing.get("genres", []) if str(v).strip()}))
+    after_genres = _format_list(new_lists["genres"])
+    if before_genres != after_genres:
+        diffs.append(f"genres: {before_genres} -> {after_genres}")
     return diffs
 
 
