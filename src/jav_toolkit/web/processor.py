@@ -32,12 +32,12 @@ def process_queue(state: AppState):
                 if existing and not state.force_override:
                     state.add_log(f"[DB] {jav_id} found in sqlite, skip metadata fetch")
                 else:
-                    url = search_id(jav_id)
+                    url = search_id(jav_id, headless=state.headless)
                     if not url:
                         state.add_log(f"[WARN] {jav_id} search failed")
                         continue
 
-                    data = fetch_detail(url, jav_id)
+                    data = fetch_detail(url, jav_id, headless=state.headless)
                     if not data:
                         state.add_log(f"[WARN] {jav_id} detail fetch failed")
                         continue
@@ -68,7 +68,7 @@ def process_queue(state: AppState):
                         or (need_preview and not media["preview_mp4"])
                     )
                     if needs_scrape:
-                        media = scrape_media_urls(jav_id)
+                        media = scrape_media_urls(jav_id, headless=state.headless)
                         save_media_urls(conn, jav_id, media)
                     else:
                         state.add_log(f"[DB] {jav_id} media urls found in sqlite, skip media scrape")

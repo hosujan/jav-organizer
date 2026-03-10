@@ -9,6 +9,7 @@ from pathlib import Path
 class AppState:
     db_path: Path
     media_dir: Path
+    headless: bool = True
     selected_dir: Path | None = None
     items: list[dict] = field(default_factory=list)
     video_index: dict[str, str] = field(default_factory=dict)
@@ -37,4 +38,5 @@ class AppState:
                 "logs": list(self.logs[-80:]),
                 "items": list(self.items),
                 "force_override": self.force_override,
+                "headless": self.headless,
             }

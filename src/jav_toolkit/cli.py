@@ -5,12 +5,14 @@ from __future__ import annotations
 import argparse
 import os
 import shlex
+import shutil
 import sys
 import time
+import textwrap
 from pathlib import Path
 
 from . import db, media, scraper
-from .config import BROWSER_HEADLESS, DELAY, open_db
+from .config import BROWSER_HEADLESS, DELAY, get_setting, open_db, set_setting
 from .web import server
 
 _HISTORY_FILE = Path.home() / ".jav_cli_history"
@@ -67,7 +69,37 @@ except Exception:
     _PTK_AVAILABLE = False
 
 _PROMPT_SESSION: PromptSession[str] | None = None if _PTK_AVAILABLE else None
+_SETTINGS_DB_PATH = Path("jav.db")
+_BROWSER_HEADLESS_SETTING_KEY = "browser_headless"
 _BROWSER_HEADLESS = BROWSER_HEADLESS
+
+
+def _parse_bool_setting(value: str | None, default: bool) -> bool:
+    if value is None:
+        return default
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
+def _load_browser_headless_setting() -> bool:
+    conn = open_db(_SETTINGS_DB_PATH)
+    try:
+        raw = get_setting(conn, _BROWSER_HEADLESS_SETTING_KEY)
+    finally:
+        conn.close()
+    return _parse_bool_setting(raw, BROWSER_HEADLESS)
+
+
+def _save_browser_headless_setting(value: bool) -> None:
+    conn = open_db(_SETTINGS_DB_PATH)
+    try:
+        set_setting(conn, _BROWSER_HEADLESS_SETTING_KEY, "true" if value else "false")
+    finally:
+        conn.close()
 
 
 def _clear_screen() -> None:
@@ -553,29 +585,67 @@ def _diff_media_files(jav_id: str, media_root: Path, payloads: dict[str, dict]) 
 
 
 def _print_shell_help() -> None:
+    rows = [
+        ("fetch <id> [id2 ...]", "Fetch metadata and media for one or more JAV IDs.", "fetch MISM-410 ABW-123"),
+        ("db list", "Show recent videos stored in the local SQLite database.", "db list"),
+        ("db show <id>", "Display the full stored record for a single JAV ID.", "db show MISM-410"),
+        ("db search <query>", "Search local records by ID, title, actress, genre, or series.", "db search MISM"),
+        ("db stats", "Print summary counts and media coverage from the local database.", "db stats"),
+        ("db export --format <fmt>", "Export database snapshots as JSON or CSV.", "db export --format json"),
+        ("serve", "Start the local web frontend using the current headless setting.", "serve"),
+        ("/config", "Open the REPL config menu, including browser headless mode.", "/config"),
+        ("/clear", "Clear the terminal and redraw the REPL banner.", "/clear"),
+        ("/help", "Show this command reference.", "/help"),
+        ("/quit", "Exit the interactive shell.", "/quit"),
+    ]
+    term_width = max(60, shutil.get_terminal_size(fallback=(100, 24)).columns)
+
     if _CONSOLE:
-        table = Table(title="Interactive Commands", show_header=True, header_style="bold cyan")
-        table.add_column("Category", style="green", no_wrap=True)
-        table.add_column("Examples")
-        table.add_row("CLI commands", "fetch MISM-410")
-        table.add_row("CLI commands", "db search MISM-410")
-        table.add_row("CLI commands", "db show MISM-410 | db list | db stats")
-        table.add_row("CLI commands", "serve")
-        table.add_row("Slash commands", "/help  /config  /clear  /quit")
+        narrow = term_width < 96
+        table = Table(
+            title="Interactive Commands",
+            show_header=True,
+            header_style="bold cyan",
+            expand=True,
+            pad_edge=False,
+        )
+        table.add_column("Command", style="green", no_wrap=not narrow, ratio=2, min_width=16)
+        table.add_column("Explanation", ratio=4, min_width=24)
+        table.add_column("Example", ratio=3, min_width=18)
+        for command, explanation, example in rows:
+            table.add_row(command, explanation, example)
         _CONSOLE.print(table)
         return
 
     print("Interactive commands:")
-    print("  CLI commands:")
-    print("    fetch MISM-410")
-    print("    fetch MISM-410 ABW-123")
-    print("    db search MISM-410")
-    print("    db list | db show MISM-410 | db stats")
-    print("    serve")
-    print("")
-    print("  Slash commands:")
-    for cmd, desc in _SLASH_COMMANDS.items():
-        print(f"    {cmd:<7} {desc}")
+    if term_width < 88:
+        for command, explanation, example in rows:
+            print(f"  {command}")
+            for line in textwrap.wrap(explanation, width=term_width - 6):
+                print(f"    {line}")
+            print(f"    e.g. {example}")
+        return
+
+    command_width = min(max(len(command) for command, _, _ in rows), 26)
+    example_width = min(max(len(example) for _, _, example in rows), max(18, term_width // 4))
+    explanation_width = max(20, term_width - command_width - example_width - 8)
+    header = f"  {'Command':<{command_width}}  {'Explanation':<{explanation_width}}  {'Example':<{example_width}}"
+    print(header)
+    print(f"  {'-' * command_width}  {'-' * explanation_width}  {'-' * example_width}")
+    for command, explanation, example in rows:
+        wrapped_explanation = textwrap.wrap(explanation, width=explanation_width) or [""]
+        wrapped_command = textwrap.wrap(command, width=command_width) or [""]
+        wrapped_example = textwrap.wrap(example, width=example_width) or [""]
+        height = max(len(wrapped_command), len(wrapped_explanation), len(wrapped_example))
+        wrapped_command.extend([""] * (height - len(wrapped_command)))
+        wrapped_explanation.extend([""] * (height - len(wrapped_explanation)))
+        wrapped_example.extend([""] * (height - len(wrapped_example)))
+        for idx in range(height):
+            print(
+                f"  {wrapped_command[idx]:<{command_width}}  "
+                f"{wrapped_explanation[idx]:<{explanation_width}}  "
+                f"{wrapped_example[idx]:<{example_width}}"
+            )
 
 
 def _print_slash_indicators(prefix: str = "") -> None:
@@ -628,6 +698,7 @@ def _configure_shell() -> None:
                 else:
                     _print_warn("Invalid choice. Try again.")
                     continue
+                _save_browser_headless_setting(_BROWSER_HEADLESS)
                 _print_status(f"Saved: browser headless mode = {'on' if _BROWSER_HEADLESS else 'off'}.")
                 break
             continue
@@ -762,7 +833,7 @@ def _dispatch(argv: list[str]) -> None:
         db.main(argv[1:], prog="jav db")
         return
     if command == "serve":
-        server.main(argv[1:], prog="jav serve")
+        server.main(argv[1:], prog="jav serve", headless=_BROWSER_HEADLESS)
         return
 
     print(f"jav: error: invalid command '{command}'")
@@ -771,7 +842,9 @@ def _dispatch(argv: list[str]) -> None:
 
 
 def main() -> None:
+    global _BROWSER_HEADLESS
     argv = list(sys.argv[1:])
+    _BROWSER_HEADLESS = _load_browser_headless_setting()
 
     if argv:
         if argv[0] in {"-h", "--help"}:

@@ -8,7 +8,7 @@ BASE_URL  = "https://missav.ws"
 LANG      = "zh"          # Traditional Chinese
 DELAY     = 1.5           # Polite delay between requests (seconds)
 MEDIA_DIR = Path("media")
-BROWSER_HEADLESS = False  # Playwright browser mode default
+BROWSER_HEADLESS = True   # Playwright browser mode default
 BROWSER_PROFILE_DIR = Path(".playwright_profile")
 
 HEADERS = {
