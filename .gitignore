@@ -12,3 +12,6 @@ media/
 
 # Database files
 *.db
+
+# Other
+.playwright_profile/

@@ -6,10 +6,11 @@ import argparse
 import os
 import shlex
 import sys
+import time
 from pathlib import Path
-from typing import Literal
 
 from . import db, media, scraper
+from .config import BROWSER_HEADLESS, DELAY, open_db
 from .web import server
 
 _HISTORY_FILE = Path.home() / ".jav_cli_history"
@@ -66,7 +67,7 @@ except Exception:
     _PTK_AVAILABLE = False
 
 _PROMPT_SESSION: PromptSession[str] | None = None if _PTK_AVAILABLE else None
-_FETCH_SAVE_MODE: Literal["ask", "yes", "no"] = "ask"
+_BROWSER_HEADLESS = BROWSER_HEADLESS
 
 
 def _clear_screen() -> None:
@@ -258,13 +259,255 @@ def _build_fetch_parser() -> argparse.ArgumentParser:
 
 
 def _run_fetch(args: argparse.Namespace) -> None:
-    media_argv = list(args.ids)
-    media_root = Path("media").resolve()
+    normalized_ids = [value.strip().upper() for value in args.ids if value.strip()]
+    if not normalized_ids:
+        _print_warn("Missing JAV ID.")
+        return
 
-    scraper.fetch_ids(args.ids, db_path="jav.db", save_mode=_FETCH_SAVE_MODE)
+    db_path = Path("jav.db")
+    media_root = Path("media").resolve()
     media_root.mkdir(parents=True, exist_ok=True)
-    media_argv += ["--media-dir", str(media_root)]
-    media.main(media_argv, prog="jav fetch")
+
+    conn = open_db(db_path)
+    plans: list[dict] = []
+    try:
+        for jav_id in normalized_ids:
+            print(f"\n{'─' * 50}\n{jav_id}")
+            url = scraper.search_id(jav_id, headless=_BROWSER_HEADLESS)
+            if not url:
+                continue
+            time.sleep(DELAY)
+
+            data = scraper.fetch_detail(url, jav_id, headless=_BROWSER_HEADLESS)
+            if not data:
+                continue
+
+            media_urls = media.scrape_media_urls(jav_id, headless=_BROWSER_HEADLESS)
+            payloads = media.fetch_media_payloads(jav_id, media_urls)
+
+            info_diffs = _diff_video_info(conn, jav_id, data)
+            media_diffs, media_changed, media_changed_keys = _diff_media_files(jav_id, media_root, payloads)
+            if info_diffs or media_diffs:
+                plans.append(
+                    {
+                        "jav_id": jav_id,
+                        "data": data,
+                        "media_urls": media_urls,
+                        "payloads": payloads,
+                        "info_diffs": info_diffs,
+                        "media_diffs": media_diffs,
+                        "media_changed": media_changed,
+                        "media_changed_keys": media_changed_keys,
+                    }
+                )
+            time.sleep(DELAY)
+
+        if not plans:
+            _print_status("No metadata/media changes detected. Nothing to save.")
+            return
+
+        for plan in plans:
+            print(f"\n{plan['jav_id']}:")
+            for line in plan["info_diffs"] + plan["media_diffs"]:
+                print(f"  {line}")
+
+        info_changed_count = sum(1 for plan in plans if plan["info_diffs"])
+        media_changed_count = sum(1 for plan in plans if plan["media_changed"])
+        answer = "n"
+        if sys.stdin.isatty():
+            answer = input(
+                f"\n  In total {info_changed_count} videos have updated info, "
+                f"and {media_changed_count} videos have new media files. "
+                "Save to DB and local disk? [Y/n/ya/na]: "
+            ).strip().lower()
+        else:
+            _print_status("Non-interactive mode: changes detected but save is skipped.")
+
+        if answer in {"", "y", "yes", "ya", "yes all"}:
+            for plan in plans:
+                if plan["info_diffs"]:
+                    scraper.upsert_video(conn, plan["data"])
+                media.save_media_urls(conn, plan["jav_id"], plan["media_urls"])
+                changed_payloads = {
+                    key: value
+                    for key, value in plan["payloads"].items()
+                    if key in plan["media_changed_keys"]
+                }
+                saved = media.save_media_payloads(plan["jav_id"], changed_payloads, media_root)
+                saved_parts: list[str] = []
+                if plan["info_diffs"]:
+                    saved_parts.append("metadata")
+                if saved:
+                    saved_parts.append(", ".join(saved.keys()))
+                if not saved_parts:
+                    saved_parts.append("no-op")
+                _print_status(
+                    f"[OK] {plan['jav_id']} saved "
+                    f"({'; '.join(saved_parts)})"
+                )
+        else:
+            _print_status("Save skipped.")
+    finally:
+        conn.close()
+
+
+def _format_scalar(value) -> str:
+    if value is None:
+        return "—"
+    if isinstance(value, float):
+        return f"{value:.2f}".rstrip("0").rstrip(".")
+    text = str(value).strip()
+    return text if text else "—"
+
+
+def _format_list(values: list[str]) -> str:
+    if not values:
+        return "—"
+    return ", ".join(values)
+
+
+def _db_video_snapshot(conn, jav_id: str) -> dict | None:
+    row = conn.execute(
+        """
+        SELECT id, title, plot, release_date, duration_min, cover_url, page_url,
+               publisher, label, series, director, rating
+        FROM videos
+        WHERE jav_id=?
+        """,
+        (jav_id,),
+    ).fetchone()
+    if not row:
+        return None
+
+    actresses = [
+        actress_row["name"]
+        for actress_row in conn.execute(
+            """
+            SELECT a.name
+            FROM video_actresses va
+            JOIN actresses a ON a.id = va.actress_id
+            WHERE va.video_id=?
+            ORDER BY a.name
+            """,
+            (row["id"],),
+        ).fetchall()
+    ]
+    genres = [
+        genre_row["name"]
+        for genre_row in conn.execute(
+            """
+            SELECT g.name
+            FROM video_genres vg
+            JOIN genres g ON g.id = vg.genre_id
+            WHERE vg.video_id=?
+            ORDER BY g.name
+            """,
+            (row["id"],),
+        ).fetchall()
+    ]
+    return {
+        "title": row["title"],
+        "plot": row["plot"],
+        "release_date": row["release_date"],
+        "duration_min": row["duration_min"],
+        "cover_url": row["cover_url"],
+        "page_url": row["page_url"],
+        "publisher": row["publisher"],
+        "label": row["label"],
+        "series": row["series"],
+        "director": row["director"],
+        "rating": row["rating"],
+        "actresses": actresses,
+        "genres": genres,
+    }
+
+
+def _diff_video_info(conn, jav_id: str, data: dict) -> list[str]:
+    fields = [
+        "title",
+        "plot",
+        "release_date",
+        "duration_min",
+        "cover_url",
+        "publisher",
+        "label",
+        "series",
+        "director",
+        "rating",
+    ]
+    existing = _db_video_snapshot(conn, jav_id)
+    new_lists = {
+        "actresses": sorted({str(v).strip() for v in data.get("actresses", []) if str(v).strip()}),
+        "genres": sorted({str(v).strip() for v in data.get("genres", []) if str(v).strip()}),
+    }
+
+    diffs: list[str] = []
+    if not existing:
+        for field in fields:
+            new_value = _format_scalar(data.get(field))
+            if new_value != "—":
+                diffs.append(f"{field}: — -> {new_value}")
+        for field in ("actresses", "genres"):
+            new_value = _format_list(new_lists[field])
+            if new_value != "—":
+                diffs.append(f"{field}: — -> {new_value}")
+        return diffs
+
+    for field in fields:
+        before = _format_scalar(existing.get(field))
+        after = _format_scalar(data.get(field))
+        if before != after:
+            diffs.append(f"{field}: {before} -> {after}")
+
+    for field in ("actresses", "genres"):
+        before = _format_list(sorted({str(v).strip() for v in existing.get(field, []) if str(v).strip()}))
+        after = _format_list(new_lists[field])
+        if before != after:
+            diffs.append(f"{field}: {before} -> {after}")
+    return diffs
+
+
+def _size_text(size: int | None) -> str:
+    if not size:
+        return "—"
+    return f"{size // 1024}KB"
+
+
+def _media_changed(existing_path: Path | None, payload: dict | None) -> tuple[bool, int | None, int | None]:
+    before_size: int | None = None
+    if existing_path and existing_path.exists():
+        before_size = existing_path.stat().st_size
+    if not payload:
+        return False, before_size, None
+    after_size = int(payload["size"])
+    if not existing_path or not existing_path.exists():
+        return True, before_size, after_size
+    try:
+        before_bytes = existing_path.read_bytes()
+    except Exception:
+        return True, before_size, after_size
+    return before_bytes != payload["data"], before_size, after_size
+
+
+def _diff_media_files(jav_id: str, media_root: Path, payloads: dict[str, dict]) -> tuple[list[str], bool, set[str]]:
+    local = media.local_media_paths(jav_id, media_root)
+    media_diffs: list[str] = []
+    media_changed = False
+    changed_keys: set[str] = set()
+
+    poster_changed, poster_before, poster_after = _media_changed(local["poster"], payloads.get("poster"))
+    if poster_changed:
+        media_diffs.append(f"poster: {_size_text(poster_before)} -> {_size_text(poster_after)}")
+        media_changed = True
+        changed_keys.add("poster")
+
+    preview_changed, preview_before, preview_after = _media_changed(local["preview_mp4"], payloads.get("preview_mp4"))
+    if preview_changed:
+        media_diffs.append(f"preview.mp4: {_size_text(preview_before)} -> {_size_text(preview_after)}")
+        media_changed = True
+        changed_keys.add("preview_mp4")
+
+    return media_diffs, media_changed, changed_keys
 
 
 def _print_shell_help() -> None:
@@ -314,31 +557,40 @@ def _print_slash_indicators(prefix: str = "") -> None:
 
 
 def _configure_shell() -> None:
-    global _FETCH_SAVE_MODE
-    mode_labels = {
-        "ask": "ask every time",
-        "yes": "always save without prompt",
-        "no": "never save without prompt",
-    }
-    _print_status(f"Current fetch DB save mode: {mode_labels[_FETCH_SAVE_MODE]}")
-    print("Choose fetch DB save mode:")
-    print("  1) ask every time")
-    print("  2) always save without prompt")
-    print("  3) never save without prompt")
-    choice = input("Select mode [1/2/3, Enter to keep]: ").strip().lower()
-    if not choice:
-        _print_status("Config unchanged.")
-        return
-    if choice == "1":
-        _FETCH_SAVE_MODE = "ask"
-    elif choice == "2":
-        _FETCH_SAVE_MODE = "yes"
-    elif choice == "3":
-        _FETCH_SAVE_MODE = "no"
-    else:
-        _print_warn("Invalid choice. Config unchanged.")
-        return
-    _print_status(f"Saved: fetch DB save mode = {mode_labels[_FETCH_SAVE_MODE]}.")
+    global _BROWSER_HEADLESS
+    while True:
+        _print_status("Current configuration:")
+        _print_status(f"  browser headless mode: {'on' if _BROWSER_HEADLESS else 'off'}")
+        print("Choose config item:")
+        print(f"  1) browser headless mode ({'on' if _BROWSER_HEADLESS else 'off'})")
+        print("  b) back")
+        item = input("Select item [1/b, Enter to keep]: ").strip().lower()
+
+        if not item or item in {"b", "back"}:
+            _print_status("Exited config menu.")
+            return
+
+        if item == "1":
+            while True:
+                print("Choose browser headless mode:")
+                print(f"  1) off (show browser window){' (current)' if not _BROWSER_HEADLESS else ''}")
+                print(f"  2) on (run headless){' (current)' if _BROWSER_HEADLESS else ''}")
+                print("  b) back")
+                choice = input("Select mode [1/2/b, Enter to keep]: ").strip().lower()
+                if not choice or choice in {"b", "back"}:
+                    break
+                if choice == "1":
+                    _BROWSER_HEADLESS = False
+                elif choice == "2":
+                    _BROWSER_HEADLESS = True
+                else:
+                    _print_warn("Invalid choice. Try again.")
+                    continue
+                _print_status(f"Saved: browser headless mode = {'on' if _BROWSER_HEADLESS else 'off'}.")
+                break
+            continue
+
+        _print_warn("Invalid choice. Try again.")
 
 
 def _parse_shell_input(raw: str) -> list[str] | None:

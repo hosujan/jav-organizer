@@ -11,21 +11,62 @@ from datetime import datetime
 from typing import Literal
 from urllib.parse import urljoin, urlparse
 
-from .config import BASE_URL, DELAY, LANG, open_db
+from .config import BASE_URL, BROWSER_HEADLESS, BROWSER_PROFILE_DIR, DELAY, LANG, open_db
 
 
 # ── Playwright page fetch ─────────────────────────────────────────────────────
 
-def _browser_get(url: str, wait_ms: int = 2000) -> tuple[str, str]:
+def _challenge_signal(page) -> str | None:
+    url = page.url.lower()
+    title = (page.title() or "").strip().lower()
+    if "cdn-cgi/challenge" in url or "challenge-platform" in url:
+        return f"url={page.url}"
+    if title in {"just a moment...", "attention required! | cloudflare", "verify you are human"}:
+        return f"title={title}"
+    selectors = (
+        "#challenge-form",
+        "#cf-challenge-running",
+        "#challenge-running",
+        "iframe[src*='challenges.cloudflare.com']",
+        "input[name='cf_ch_verify']",
+    )
+    for selector in selectors:
+        if page.query_selector(selector):
+            return f"selector={selector}"
+    return None
+
+
+def _wait_for_challenge_clear(page, *, headless: bool) -> None:
+    reason = _challenge_signal(page)
+    if not reason:
+        return
+
+    print(f"  [WARN] bot challenge detected ({reason}).")
+    if not headless and sys.stdin.isatty():
+        print("  [INFO] complete verification in the browser window (up to 120s).")
+        for _ in range(60):
+            page.wait_for_timeout(2_000)
+            if not _challenge_signal(page):
+                print("  [OK] challenge cleared.")
+                return
+        print("  [WARN] challenge still present after 120s, continuing anyway.")
+        return
+
+    page.wait_for_timeout(8_000)
+
+
+def _browser_get(url: str, wait_ms: int = 2000, *, headless: bool = BROWSER_HEADLESS) -> tuple[str, str]:
     """Return (final_url, html) using a real Chromium browser."""
     from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 
+    profile_dir = BROWSER_PROFILE_DIR.expanduser().resolve()
+    profile_dir.mkdir(parents=True, exist_ok=True)
+
     with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=True,
+        ctx = p.chromium.launch_persistent_context(
+            user_data_dir=str(profile_dir),
+            headless=headless,
             args=["--no-sandbox", "--disable-blink-features=AutomationControlled"],
-        )
-        ctx = browser.new_context(
             user_agent=(
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -34,29 +75,32 @@ def _browser_get(url: str, wait_ms: int = 2000) -> tuple[str, str]:
             locale="zh-TW",
             extra_http_headers={"Accept-Language": "zh-TW,zh;q=0.9"},
         )
-        page = ctx.new_page()
+        ctx.add_init_script(
+            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
+        )
+        page = ctx.pages[0] if ctx.pages else ctx.new_page()
         try:
             page.goto(url, wait_until="domcontentloaded", timeout=30_000)
+            _wait_for_challenge_clear(page, headless=headless)
             page.wait_for_timeout(wait_ms)
         except PWTimeout:
             print("  [WARN] page load timed out, parsing partial content")
         final_url = page.url
         html = page.content()
         ctx.close()
-        browser.close()
     return final_url, html
 
 
 # ── Search ────────────────────────────────────────────────────────────────────
 
-def search_id(jav_id: str) -> str | None:
+def search_id(jav_id: str, *, headless: bool = BROWSER_HEADLESS) -> str | None:
     """Return canonical detail-page URL, skipping uncensored-leak variants."""
     from bs4 import BeautifulSoup
 
     search_url = f"{BASE_URL}/{LANG}/search/{jav_id.lower()}"
     print(f"  [SEARCH] {search_url}")
     try:
-        _, html = _browser_get(search_url)
+        _, html = _browser_get(search_url, headless=headless)
     except Exception as e:
         print(f"  [ERROR] search failed: {e}")
         return None
@@ -84,7 +128,7 @@ def search_id(jav_id: str) -> str | None:
 
 # ── Detail page ───────────────────────────────────────────────────────────────
 
-def fetch_detail(url: str, jav_id: str) -> dict | None:
+def fetch_detail(url: str, jav_id: str, *, headless: bool = BROWSER_HEADLESS) -> dict | None:
     from bs4 import BeautifulSoup
 
     # Ensure language prefix
@@ -96,7 +140,7 @@ def fetch_detail(url: str, jav_id: str) -> dict | None:
 
     print(f"  [DETAIL] {url}")
     try:
-        _, html = _browser_get(url, wait_ms=3000)
+        _, html = _browser_get(url, wait_ms=3000, headless=headless)
     except Exception as e:
         print(f"  [ERROR] detail fetch failed: {e}")
         return None
@@ -378,7 +422,13 @@ def upsert_video(conn, data: dict) -> int:
     return vid_id
 
 
-def fetch_ids(ids: list[str], db_path: str = "jav.db", save_mode: Literal["ask", "yes", "no"] = "ask") -> None:
+def fetch_ids(
+    ids: list[str],
+    db_path: str = "jav.db",
+    save_mode: Literal["ask", "yes", "no"] = "ask",
+    *,
+    headless: bool = BROWSER_HEADLESS,
+) -> None:
     normalized_ids = [i.strip().upper() for i in ids if i.strip()]
     if not normalized_ids:
         raise ValueError("fetch_ids requires at least one JAV ID")
@@ -387,11 +437,11 @@ def fetch_ids(ids: list[str], db_path: str = "jav.db", save_mode: Literal["ask",
 
     for jav_id in normalized_ids:
         print(f"\n{'─'*50}\n{jav_id}")
-        url = search_id(jav_id)
+        url = search_id(jav_id, headless=headless)
         if not url:
             continue
         time.sleep(DELAY)
-        data = fetch_detail(url, jav_id)
+        data = fetch_detail(url, jav_id, headless=headless)
         if not data:
             continue
 

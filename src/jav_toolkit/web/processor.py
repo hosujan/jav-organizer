@@ -52,22 +52,34 @@ def process_queue(state: AppState):
                 has_db_preview = bool(media_row and media_row["preview_mp4_url"])
                 has_local_poster = bool(item.get("has_poster_local"))
                 has_local_preview = bool(item.get("has_preview_local"))
+                need_poster = state.force_override or not has_local_poster
+                need_preview = state.force_override or not has_local_preview
+                media = {
+                    "poster": media_row["poster_url"] if has_db_poster else None,
+                    "preview_mp4": media_row["preview_mp4_url"] if has_db_preview else None,
+                }
 
-                if has_db_poster and has_db_preview and not state.force_override:
-                    media = {
-                        "poster": media_row["poster_url"],
-                        "preview_mp4": media_row["preview_mp4_url"],
+                if not need_poster and not need_preview:
+                    state.add_log(f"[MEDIA] {jav_id} local poster+preview found, skip media fetch")
+                else:
+                    needs_scrape = (
+                        state.force_override
+                        or (need_poster and not media["poster"])
+                        or (need_preview and not media["preview_mp4"])
+                    )
+                    if needs_scrape:
+                        media = scrape_media_urls(jav_id)
+                        save_media_urls(conn, jav_id, media)
+                    else:
+                        state.add_log(f"[DB] {jav_id} media urls found in sqlite, skip media scrape")
+
+                    download_targets = {
+                        "poster": media.get("poster") if need_poster else None,
+                        "preview_mp4": media.get("preview_mp4") if need_preview else None,
                     }
-                    state.add_log(f"[DB] {jav_id} media urls found in sqlite, skip media scrape")
-                else:
-                    media = scrape_media_urls(jav_id)
-                save_media_urls(conn, jav_id, media)
-                if has_local_poster and has_local_preview and not state.force_override:
-                    state.add_log(f"[MEDIA] {jav_id} local poster+preview found, skip download")
-                else:
                     saved = download_media(
                         jav_id,
-                        media,
+                        download_targets,
                         state.media_dir,
                         overwrite_existing=state.force_override,
                     )
