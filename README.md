@@ -1,8 +1,7 @@
 # jav-toolkit
 
 Local-first JAV organizer with CLI and web UI:
-- metadata scraping (`jav fetch --info`)
-- media handling (`jav fetch --media`)
+- metadata + media fetch (`fetch <id>` in REPL)
 - SQLite querying/export (`jav db`)
 - local web app (`jav serve`)
 
@@ -19,7 +18,12 @@ Local-first JAV organizer with CLI and web UI:
 ```bash
 uv sync
 uv run playwright install chromium
-uv run jav serve
+uv run jav
+```
+
+Then in REPL:
+```text
+jav> serve
 ```
 
 Open: `http://127.0.0.1:8765`
