@@ -7,6 +7,7 @@ import os
 import shlex
 import sys
 from pathlib import Path
+from typing import Literal
 
 from . import db, media, scraper
 from .web import server
@@ -14,6 +15,7 @@ from .web import server
 _HISTORY_FILE = Path.home() / ".jav_cli_history"
 _SLASH_COMMANDS: dict[str, str] = {
     "/help": "show help and examples",
+    "/config": "configure interactive shell behavior",
     "/clear": "clear screen and redraw banner",
     "/quit": "exit interactive shell",
 }
@@ -64,6 +66,7 @@ except Exception:
     _PTK_AVAILABLE = False
 
 _PROMPT_SESSION: PromptSession[str] | None = None if _PTK_AVAILABLE else None
+_FETCH_SAVE_MODE: Literal["ask", "yes", "no"] = "ask"
 
 
 def _clear_screen() -> None:
@@ -258,7 +261,7 @@ def _run_fetch(args: argparse.Namespace) -> None:
     media_argv = list(args.ids)
     media_root = Path("media").resolve()
 
-    scraper.fetch_ids(args.ids, db_path="jav.db", save_mode="ask")
+    scraper.fetch_ids(args.ids, db_path="jav.db", save_mode=_FETCH_SAVE_MODE)
     media_root.mkdir(parents=True, exist_ok=True)
     media_argv += ["--media-dir", str(media_root)]
     media.main(media_argv, prog="jav fetch")
@@ -273,7 +276,7 @@ def _print_shell_help() -> None:
         table.add_row("CLI commands", "db search MISM-410")
         table.add_row("CLI commands", "db show MISM-410 | db list | db stats")
         table.add_row("CLI commands", "serve")
-        table.add_row("Slash commands", "/help  /clear  /quit")
+        table.add_row("Slash commands", "/help  /config  /clear  /quit")
         _CONSOLE.print(table)
         return
 
@@ -310,25 +313,66 @@ def _print_slash_indicators(prefix: str = "") -> None:
         print(f"  {cmd:<7} {_SLASH_COMMANDS[cmd]}")
 
 
+def _configure_shell() -> None:
+    global _FETCH_SAVE_MODE
+    mode_labels = {
+        "ask": "ask every time",
+        "yes": "always save without prompt",
+        "no": "never save without prompt",
+    }
+    _print_status(f"Current fetch DB save mode: {mode_labels[_FETCH_SAVE_MODE]}")
+    print("Choose fetch DB save mode:")
+    print("  1) ask every time")
+    print("  2) always save without prompt")
+    print("  3) never save without prompt")
+    choice = input("Select mode [1/2/3, Enter to keep]: ").strip().lower()
+    if not choice:
+        _print_status("Config unchanged.")
+        return
+    if choice == "1":
+        _FETCH_SAVE_MODE = "ask"
+    elif choice == "2":
+        _FETCH_SAVE_MODE = "yes"
+    elif choice == "3":
+        _FETCH_SAVE_MODE = "no"
+    else:
+        _print_warn("Invalid choice. Config unchanged.")
+        return
+    _print_status(f"Saved: fetch DB save mode = {mode_labels[_FETCH_SAVE_MODE]}.")
+
+
 def _parse_shell_input(raw: str) -> list[str] | None:
     text = raw.strip()
     if not text:
         return None
 
     if text.startswith("/"):
-        cmd = text[1:].strip().lower()
-        if cmd == "quit":
-            return ["__quit__"]
-        if cmd == "clear":
-            return ["__clear__"]
-        if cmd == "help":
-            _print_shell_help()
-            return None
-        if not cmd:
+        cmd_text = text[1:].strip().lower()
+        if not cmd_text:
             _print_slash_indicators("/")
             return None
-        _print_warn(f"Unknown slash command: /{cmd}")
-        _print_status("Use exact slash commands: /help, /clear, /quit.")
+
+        matches = [cmd for cmd in _SLASH_COMMANDS if cmd[1:].startswith(cmd_text)]
+        if len(matches) == 1:
+            resolved = matches[0]
+            if resolved == "/quit":
+                return ["__quit__"]
+            if resolved == "/clear":
+                return ["__clear__"]
+            if resolved == "/config":
+                _configure_shell()
+                return None
+            if resolved == "/help":
+                _print_shell_help()
+                return None
+
+        if len(matches) > 1:
+            _print_warn(f"Ambiguous slash command: /{cmd_text}")
+            _print_status(f"Matches: {', '.join(matches)}")
+            return None
+
+        _print_warn(f"Unknown slash command: /{cmd_text}")
+        _print_status("Use slash commands: /help (/h), /config (/co), /clear (/c), /quit (/q).")
         return None
 
     if text.lower() == "quit":
@@ -354,8 +398,13 @@ def _parse_shell_input(raw: str) -> list[str] | None:
         first = tokens[0]
         if first in _ROOT_COMMANDS:
             if first == "fetch":
-                if len(tokens) < 2 or any(part.startswith("-") for part in tokens[1:]):
-                    _print_warn("Invalid fetch syntax. Use exact form: fetch <id> or fetch <id1> <id2> ...")
+                if len(tokens) < 2:
+                    _print_warn("Missing JAV ID.")
+                    _print_status("Usage: fetch <id> <id2 ...>")
+                    return None
+                if any(part.startswith("-") for part in tokens[1:]):
+                    _print_warn("Invalid fetch syntax.")
+                    _print_status("Usage: fetch <id> <id2 ...>")
                     return None
             return tokens
 
