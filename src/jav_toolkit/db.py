@@ -6,8 +6,7 @@ Usage:
     jav db show MISM-410
     jav db search "Emma"
     jav db stats
-    jav db export --format json
-    jav db export --format csv
+    jav db export
 """
 
 from __future__ import annotations
@@ -145,7 +144,7 @@ def cmd_stats(conn):
     print(f"{'─'*40}\n")
 
 
-def cmd_export(conn, fmt: str, db_path: str):
+def cmd_export(conn, db_path: str):
     rows = conn.execute("""
         SELECT v.*,
                GROUP_CONCAT(DISTINCT a.name) AS actresses,
@@ -160,17 +159,14 @@ def cmd_export(conn, fmt: str, db_path: str):
 
     stem = Path(db_path).stem
 
-    if fmt == "json":
-        fname = f"{stem}_export.json"
-        with open(fname, "w", encoding="utf-8") as f:
-            json.dump([dict(r) for r in rows], f, ensure_ascii=False, indent=2)
-    else:
-        fname = f"{stem}_export.csv"
-        with open(fname, "w", newline="", encoding="utf-8") as f:
-            if rows:
-                w = csv.DictWriter(f, fieldnames=rows[0].keys())
-                w.writeheader()
-                w.writerows(dict(r) for r in rows)
+    export_dir = Path.cwd() / "export"
+    export_dir.mkdir(parents=True, exist_ok=True)
+    fname = export_dir / f"{stem}_export.csv"
+    with fname.open("w", newline="", encoding="utf-8") as f:
+        if rows:
+            w = csv.DictWriter(f, fieldnames=rows[0].keys())
+            w.writeheader()
+            w.writerows(dict(r) for r in rows)
 
     print(f"Exported {len(rows)} records → {fname}")
 
@@ -186,7 +182,7 @@ def main(argv: list[str] | None = None, prog: str = "jav db"):
     p_show = sub.add_parser("show");   p_show.add_argument("id")
     p_srch = sub.add_parser("search"); p_srch.add_argument("query")
     sub.add_parser("stats")
-    p_exp  = sub.add_parser("export"); p_exp.add_argument("--format", choices=["json","csv"], default="json")
+    sub.add_parser("export")
 
     args = parser.parse_args(argv)
     if not args.cmd:
@@ -198,7 +194,7 @@ def main(argv: list[str] | None = None, prog: str = "jav db"):
         case "show":   cmd_show(conn, args.id)
         case "search": cmd_search(conn, args.query)
         case "stats":  cmd_stats(conn)
-        case "export": cmd_export(conn, args.format, args.db)
+        case "export": cmd_export(conn, args.db)
     conn.close()
 
 
