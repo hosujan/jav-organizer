@@ -10,7 +10,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
-from ..config import MEDIA_DIR, get_setting, open_db, resolve_media_root, set_setting
+from ..config import BROWSER_HEADLESS, MEDIA_DIR, get_setting, open_db, resolve_media_root, set_setting
 from .dialogs import choose_directory_dialog
 from .pages import ALL_TITLES_HTML, ORGANIZE_HTML, VIDEO_HTML, VIEW_HTML, WATCH_HTML
 from .processor import process_queue
@@ -784,7 +784,12 @@ class AppHandler(BaseHTTPRequestHandler):
         self.send_error(404, "not found")
 
 
-def main(argv: list[str] | None = None, prog: str = "jav serve"):
+def main(
+    argv: list[str] | None = None,
+    prog: str = "jav serve",
+    *,
+    headless: bool = BROWSER_HEADLESS,
+):
     parser = argparse.ArgumentParser(
         prog=prog,
         description="Local frontend for directory scan, processing, and playback",
@@ -815,6 +820,7 @@ def main(argv: list[str] | None = None, prog: str = "jav serve"):
     state = AppState(
         db_path=Path(args.db),
         media_dir=initial_media_dir,
+        headless=headless,
         force_override=args.force_override,
     )
     start_dir: Path | None = None
@@ -854,6 +860,7 @@ def main(argv: list[str] | None = None, prog: str = "jav serve"):
     print(f"  [WEB] http://{args.host}:{args.port}")
     print(f"  [DB]  {state.db_path}")
     print(f"  [MEDIA] {state.media_dir}")
+    print(f"  [HEADLESS] {state.headless}")
     print(f"  [FORCE] {state.force_override}")
     if state.selected_dir:
         print(f"  [VIDEO] {state.selected_dir}")
