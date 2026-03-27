@@ -591,7 +591,7 @@ def _print_shell_help() -> None:
         ("db show <id>", "Display the full stored record for a single JAV ID.", "db show MISM-410"),
         ("db search <query>", "Search local records by ID, title, actress, genre, or series.", "db search MISM"),
         ("db stats", "Print summary counts and media coverage from the local database.", "db stats"),
-        ("db export", "Export the local database as CSV into the repo-root export folder.", "db export"),
+        ("db export", "Export the local database into the repo-root export folder as CSV or JSON.", "db export"),
         ("serve", "Start the local web frontend using the current headless setting.", "serve"),
         ("/config", "Open the REPL config menu, including browser headless mode.", "/config"),
         ("/clear", "Clear the terminal and redraw the REPL banner.", "/clear"),

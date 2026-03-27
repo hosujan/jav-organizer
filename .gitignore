@@ -15,3 +15,4 @@ media/
 
 # Other
 .playwright_profile/
+export/

@@ -52,6 +52,25 @@ AD_DOMAINS = {
 
 MIN_VALID_BYTES = 500
 
+_CHALLENGE_TITLE_SNIPPETS = (
+    "just a moment",
+    "attention required",
+    "verify you are human",
+    "正在執行安全驗證",
+    "安全驗證",
+    "安全检查",
+    "security check",
+)
+
+_CHALLENGE_TEXT_SNIPPETS = (
+    "正在執行安全驗證",
+    "安全驗證",
+    "security check",
+    "verify you are human",
+    "checking if the site connection is secure",
+    "before accessing",
+)
+
 
 def _is_cdn_url(url: str) -> bool:
     """True only if the URL comes from a known CDN domain."""
@@ -68,8 +87,11 @@ def _challenge_signal(page) -> str | None:
     title = (page.title() or "").strip().lower()
     if "cdn-cgi/challenge" in url or "challenge-platform" in url:
         return f"url={page.url}"
-    if title in {"just a moment...", "attention required! | cloudflare", "verify you are human"}:
+    if any(snippet.lower() in title for snippet in _CHALLENGE_TITLE_SNIPPETS):
         return f"title={title}"
+    body_text = (page.locator("body").inner_text(timeout=1_000) or "").strip().lower()
+    if any(snippet.lower() in body_text for snippet in _CHALLENGE_TEXT_SNIPPETS):
+        return "body=challenge-text"
     selectors = (
         "#challenge-form",
         "#cf-challenge-running",
@@ -83,26 +105,58 @@ def _challenge_signal(page) -> str | None:
     return None
 
 
-def _wait_for_challenge_clear(page, *, headless: bool) -> None:
+def _wait_for_stable_clear(page, *, polls: int = 3, interval_ms: int = 1_000) -> bool:
+    for _ in range(polls):
+        if _challenge_signal(page):
+            return False
+        page.wait_for_timeout(interval_ms)
+    return not bool(_challenge_signal(page))
+
+
+def _wait_for_challenge_clear(page, *, headless: bool) -> bool:
     reason = _challenge_signal(page)
     if not reason:
-        return
+        return True
 
     print(f"  [WARN] bot challenge detected ({reason}).")
     if not headless and sys.stdin.isatty():
         print("  [INFO] complete verification in the browser window (up to 120s).")
         for _ in range(60):
             page.wait_for_timeout(2_000)
-            if not _challenge_signal(page):
+            if _wait_for_stable_clear(page):
                 print("  [OK] challenge cleared.")
-                return
+                return True
         print("  [WARN] challenge still present after 120s, continuing anyway.")
-        return
+        return False
 
     page.wait_for_timeout(8_000)
+    return _wait_for_stable_clear(page, polls=2, interval_ms=500)
 
 
-def scrape_media_urls(jav_id: str, *, headless: bool = BROWSER_HEADLESS) -> dict:
+def _launch_browser_context(playwright, profile_dir: Path, *, headless: bool):
+    ctx = playwright.chromium.launch_persistent_context(
+        user_data_dir=str(profile_dir),
+        headless=headless,
+        args=["--no-sandbox", "--disable-blink-features=AutomationControlled"],
+        user_agent=(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/122.0.0.0 Safari/537.36"
+        ),
+        locale="zh-TW",
+        extra_http_headers={"Accept-Language": "zh-TW,zh;q=0.9"},
+    )
+    ctx.add_init_script(
+        "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
+    )
+    return ctx
+
+
+def scrape_media_urls(
+    jav_id: str,
+    *,
+    headless: bool = BROWSER_HEADLESS,
+) -> dict:
     from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 
     page_url = f"{BASE_URL}/{LANG}/{jav_id.lower()}"
@@ -110,67 +164,57 @@ def scrape_media_urls(jav_id: str, *, headless: bool = BROWSER_HEADLESS) -> dict
         "poster":      None,
         "preview_mp4": None,
     }
-    captured: list[str] = []
     profile_dir = BROWSER_PROFILE_DIR.expanduser().resolve()
     profile_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"  [BROWSER] {page_url}")
     with sync_playwright() as p:
-        ctx = p.chromium.launch_persistent_context(
-            user_data_dir=str(profile_dir),
-            headless=headless,
-            args=["--no-sandbox", "--disable-blink-features=AutomationControlled"],
-            user_agent=(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/122.0.0.0 Safari/537.36"
-            ),
-            locale="zh-TW",
-            extra_http_headers={"Accept-Language": "zh-TW,zh;q=0.9"},
-        )
-        ctx.add_init_script(
-            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
-        )
-        page = ctx.pages[0] if ctx.pages else ctx.new_page()
-        page.on("request",  lambda req: captured.append(req.url))
-        page.on("response", lambda res: captured.append(res.url))   # also catch redirects
+        current_headless = headless
+        retried_visible = False
+        while True:
+            captured: list[str] = []
+            ctx = _launch_browser_context(p, profile_dir, headless=current_headless)
+            page = ctx.pages[0] if ctx.pages else ctx.new_page()
+            page.on("request", lambda req: captured.append(req.url))
+            page.on("response", lambda res: captured.append(res.url))
 
-        try:
-            page.goto(page_url, wait_until="domcontentloaded", timeout=30_000)
-            _wait_for_challenge_clear(page, headless=headless)
-            page.wait_for_timeout(4_000)   # let lazy assets load
-        except PWTimeout:
-            print("  [WARN] page load timed out, parsing partial content")
+            try:
+                page.goto(page_url, wait_until="domcontentloaded", timeout=30_000)
+                cleared = _wait_for_challenge_clear(page, headless=current_headless)
+                if not cleared and current_headless and sys.stdin.isatty() and not retried_visible:
+                    print("  [INFO] reopening browser window so you can solve the challenge.")
+                    retried_visible = True
+                    current_headless = False
+                    continue
+                page.wait_for_timeout(4_000)   # let lazy assets load
+            except PWTimeout:
+                print("  [WARN] page load timed out, parsing partial content")
+            try:
+                html = page.content()
 
-        html = page.content()
+                og = page.query_selector('meta[property="og:image"]')
+                if og:
+                    val = og.get_attribute("content") or ""
+                    if _is_cdn_url(val):
+                        results["poster"] = val
 
-        # ── og:image → poster ─────────────────────────────────────────────
-        og = page.query_selector('meta[property="og:image"]')
-        if og:
-            val = og.get_attribute("content") or ""
-            if _is_cdn_url(val):
-                results["poster"] = val
+                _parse_js_vars(html, results)
+                _scan_network(captured, results)
 
-        # ── Parse all inline <script> blocks ─────────────────────────────
-        _parse_js_vars(html, results)
-
-        # ── Classify every intercepted network URL ────────────────────────
-        _scan_network(captured, results)
-
-        # ── Hover player to trigger preview load ──────────────────────────
-        if not results["preview_mp4"]:
-            player = page.query_selector(
-                "video, .video-player, #player, [class*='player'], [id*='player']"
-            )
-            if player:
-                try:
-                    player.hover()
-                    page.wait_for_timeout(2_500)
-                    _scan_network(captured, results)
-                except Exception:
-                    pass
-
-        ctx.close()
+                if not results["preview_mp4"]:
+                    player = page.query_selector(
+                        "video, .video-player, #player, [class*='player'], [id*='player']"
+                    )
+                    if player:
+                        try:
+                            player.hover()
+                            page.wait_for_timeout(2_500)
+                            _scan_network(captured, results)
+                        except Exception:
+                            pass
+                break
+            finally:
+                ctx.close()
 
     # ── CDN pattern prober (fallback) ─────────────────────────────────────
     # If we found the poster URL we know the CDN base path, probe common patterns.

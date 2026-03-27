@@ -16,13 +16,35 @@ from .config import BASE_URL, BROWSER_HEADLESS, BROWSER_PROFILE_DIR, DELAY, LANG
 
 # ── Playwright page fetch ─────────────────────────────────────────────────────
 
+_CHALLENGE_TITLE_SNIPPETS = (
+    "just a moment",
+    "attention required",
+    "verify you are human",
+    "正在執行安全驗證",
+    "安全驗證",
+    "安全检查",
+    "security check",
+)
+
+_CHALLENGE_TEXT_SNIPPETS = (
+    "正在執行安全驗證",
+    "安全驗證",
+    "security check",
+    "verify you are human",
+    "checking if the site connection is secure",
+    "before accessing",
+)
+
 def _challenge_signal(page) -> str | None:
     url = page.url.lower()
     title = (page.title() or "").strip().lower()
     if "cdn-cgi/challenge" in url or "challenge-platform" in url:
         return f"url={page.url}"
-    if title in {"just a moment...", "attention required! | cloudflare", "verify you are human"}:
+    if any(snippet.lower() in title for snippet in _CHALLENGE_TITLE_SNIPPETS):
         return f"title={title}"
+    body_text = (page.locator("body").inner_text(timeout=1_000) or "").strip().lower()
+    if any(snippet.lower() in body_text for snippet in _CHALLENGE_TEXT_SNIPPETS):
+        return "body=challenge-text"
     selectors = (
         "#challenge-form",
         "#cf-challenge-running",
@@ -36,26 +58,59 @@ def _challenge_signal(page) -> str | None:
     return None
 
 
-def _wait_for_challenge_clear(page, *, headless: bool) -> None:
+def _wait_for_stable_clear(page, *, polls: int = 3, interval_ms: int = 1_000) -> bool:
+    for _ in range(polls):
+        if _challenge_signal(page):
+            return False
+        page.wait_for_timeout(interval_ms)
+    return not bool(_challenge_signal(page))
+
+
+def _wait_for_challenge_clear(page, *, headless: bool) -> bool:
     reason = _challenge_signal(page)
     if not reason:
-        return
+        return True
 
     print(f"  [WARN] bot challenge detected ({reason}).")
     if not headless and sys.stdin.isatty():
         print("  [INFO] complete verification in the browser window (up to 120s).")
         for _ in range(60):
             page.wait_for_timeout(2_000)
-            if not _challenge_signal(page):
+            if _wait_for_stable_clear(page):
                 print("  [OK] challenge cleared.")
-                return
+                return True
         print("  [WARN] challenge still present after 120s, continuing anyway.")
-        return
+        return False
 
     page.wait_for_timeout(8_000)
+    return _wait_for_stable_clear(page, polls=2, interval_ms=500)
 
 
-def _browser_get(url: str, wait_ms: int = 2000, *, headless: bool = BROWSER_HEADLESS) -> tuple[str, str]:
+def _launch_browser_context(playwright, profile_dir: Path, *, headless: bool):
+    ctx = playwright.chromium.launch_persistent_context(
+        user_data_dir=str(profile_dir),
+        headless=headless,
+        args=["--no-sandbox", "--disable-blink-features=AutomationControlled"],
+        user_agent=(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/122.0.0.0 Safari/537.36"
+        ),
+        locale="zh-TW",
+        extra_http_headers={"Accept-Language": "zh-TW,zh;q=0.9"},
+    )
+    ctx.add_init_script(
+        "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
+    )
+    return ctx
+
+
+def _browser_get(
+    url: str,
+    wait_ms: int = 2000,
+    *,
+    headless: bool = BROWSER_HEADLESS,
+) -> tuple[str, str]:
     """Return (final_url, html) using a real Chromium browser."""
     from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 
@@ -63,32 +118,30 @@ def _browser_get(url: str, wait_ms: int = 2000, *, headless: bool = BROWSER_HEAD
     profile_dir.mkdir(parents=True, exist_ok=True)
 
     with sync_playwright() as p:
-        ctx = p.chromium.launch_persistent_context(
-            user_data_dir=str(profile_dir),
-            headless=headless,
-            args=["--no-sandbox", "--disable-blink-features=AutomationControlled"],
-            user_agent=(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/122.0.0.0 Safari/537.36"
-            ),
-            locale="zh-TW",
-            extra_http_headers={"Accept-Language": "zh-TW,zh;q=0.9"},
-        )
-        ctx.add_init_script(
-            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
-        )
-        page = ctx.pages[0] if ctx.pages else ctx.new_page()
-        try:
-            page.goto(url, wait_until="domcontentloaded", timeout=30_000)
-            _wait_for_challenge_clear(page, headless=headless)
-            page.wait_for_timeout(wait_ms)
-        except PWTimeout:
-            print("  [WARN] page load timed out, parsing partial content")
-        final_url = page.url
-        html = page.content()
-        ctx.close()
-    return final_url, html
+        current_headless = headless
+        retried_visible = False
+        while True:
+            ctx = _launch_browser_context(p, profile_dir, headless=current_headless)
+            page = ctx.pages[0] if ctx.pages else ctx.new_page()
+            try:
+                page.goto(url, wait_until="domcontentloaded", timeout=30_000)
+                cleared = _wait_for_challenge_clear(page, headless=current_headless)
+                if not cleared and current_headless and sys.stdin.isatty() and not retried_visible:
+                    print("  [INFO] reopening browser window so you can solve the challenge.")
+                    retried_visible = True
+                    current_headless = False
+                    continue
+                page.wait_for_timeout(wait_ms)
+                final_url = page.url
+                html = page.content()
+                return final_url, html
+            except PWTimeout:
+                print("  [WARN] page load timed out, parsing partial content")
+                final_url = page.url
+                html = page.content()
+                return final_url, html
+            finally:
+                ctx.close()
 
 
 # ── Search ────────────────────────────────────────────────────────────────────

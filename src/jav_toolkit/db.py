@@ -144,7 +144,27 @@ def cmd_stats(conn):
     print(f"{'─'*40}\n")
 
 
-def cmd_export(conn, db_path: str):
+def _choose_export_format() -> str | None:
+    if not sys.stdin.isatty():
+        print("Export format selection requires an interactive terminal.")
+        return None
+
+    while True:
+        print("Choose export format:")
+        print("  1) csv")
+        print("  2) json")
+        print("  b) back")
+        choice = input("Select format [1/2/b]: ").strip().lower()
+        if choice in {"1", "csv"}:
+            return "csv"
+        if choice in {"2", "json"}:
+            return "json"
+        if choice in {"b", "back", ""}:
+            return None
+        print("Invalid choice. Try again.")
+
+
+def cmd_export(conn, db_path: str, fmt: str | None = None):
     rows = conn.execute("""
         SELECT v.*,
                GROUP_CONCAT(DISTINCT a.name) AS actresses,
@@ -161,12 +181,23 @@ def cmd_export(conn, db_path: str):
 
     export_dir = Path.cwd() / "export"
     export_dir.mkdir(parents=True, exist_ok=True)
-    fname = export_dir / f"{stem}_export.csv"
-    with fname.open("w", newline="", encoding="utf-8") as f:
-        if rows:
-            w = csv.DictWriter(f, fieldnames=rows[0].keys())
-            w.writeheader()
-            w.writerows(dict(r) for r in rows)
+    if not fmt:
+        fmt = _choose_export_format()
+    if not fmt:
+        print("Export cancelled.")
+        return
+
+    if fmt == "json":
+        fname = export_dir / f"{stem}_export.json"
+        with fname.open("w", encoding="utf-8") as f:
+            json.dump([dict(r) for r in rows], f, ensure_ascii=False, indent=2)
+    else:
+        fname = export_dir / f"{stem}_export.csv"
+        with fname.open("w", newline="", encoding="utf-8") as f:
+            if rows:
+                w = csv.DictWriter(f, fieldnames=rows[0].keys())
+                w.writeheader()
+                w.writerows(dict(r) for r in rows)
 
     print(f"Exported {len(rows)} records → {fname}")
 
@@ -182,7 +213,8 @@ def main(argv: list[str] | None = None, prog: str = "jav db"):
     p_show = sub.add_parser("show");   p_show.add_argument("id")
     p_srch = sub.add_parser("search"); p_srch.add_argument("query")
     sub.add_parser("stats")
-    sub.add_parser("export")
+    p_exp = sub.add_parser("export")
+    p_exp.add_argument("format", nargs="?", choices=["csv", "json"])
 
     args = parser.parse_args(argv)
     if not args.cmd:
@@ -194,7 +226,7 @@ def main(argv: list[str] | None = None, prog: str = "jav db"):
         case "show":   cmd_show(conn, args.id)
         case "search": cmd_search(conn, args.query)
         case "stats":  cmd_stats(conn)
-        case "export": cmd_export(conn, args.db)
+        case "export": cmd_export(conn, args.db, args.format)
     conn.close()
 
 
