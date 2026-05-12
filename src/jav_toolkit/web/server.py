@@ -803,7 +803,7 @@ def main(
         help="Optional initial local video directory",
     )
     parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--port", type=int, default=8018)
     parser.add_argument(
         "--force-override",
         action="store_true",

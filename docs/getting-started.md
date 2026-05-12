@@ -21,7 +21,7 @@ Then run in REPL:
 jav> serve
 ```
 
-Default URL: `http://127.0.0.1:8765`
+Default URL: `http://127.0.0.1:8018`
 
 ## First Run Flow
 1. Open `Organize`.
